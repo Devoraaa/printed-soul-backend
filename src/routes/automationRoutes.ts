@@ -30,18 +30,20 @@ router.post("/designs", upload.single("design"), async (req: any, res: any) => {
     if (!req.file) return res.status(400).json({ error: "design image is required" })
     if (modelIds.length === 0) return res.status(400).json({ error: "select at least one phone model" })
 
-    // If using multer.diskStorage, req.file.path exists, but we want a relative URL
-    // Actually our upload middleware saves it to public/uploads and we need to strip 'public'
     const filename = req.file.filename
     const imageUrl = `/uploads/${filename}`
 
-    const design = await Design.create({
+    const designData: any = {
       title,
-      categoryId,
       imageUrl,
       totalModels: modelIds.length,
       status: "processing",
-    })
+    }
+    if (categoryId && categoryId !== "null" && categoryId !== "undefined") {
+      designData.categoryId = categoryId;
+    }
+
+    const design = await Design.create(designData)
 
     await mockupQueue.addBulk(
       modelIds.map((phoneModelId: string) => ({
@@ -51,9 +53,9 @@ router.post("/designs", upload.single("design"), async (req: any, res: any) => {
     )
 
     res.status(201).json(design)
-  } catch (err) {
-    console.error(err)
-    res.status(500).json({ error: "Failed to create design job" })
+  } catch (err: any) {
+    console.error("Automation Route Error:", err)
+    res.status(500).json({ message: err.message || "Failed to create design job" })
   }
 })
 
