@@ -24,7 +24,7 @@ export const createBrand = asyncHandler(async (req: any, res: Response, next: Ne
   const slug = slugify(name)
 
   let logoId: string | undefined
-  if (req.file) logoId = await imageService.saveImage(req.file.buffer, req.file.originalname, req.file.mimetype, req.user?.id)
+  if (req.file) logoId = await imageService.saveImage(req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, req.user?.id)
 
   const brand = await Brand.create({ name, slug, logo: logoId })
   res.status(201).json(ApiResponse.success(brand, "Brand created"))
@@ -39,7 +39,7 @@ export const updateBrand = asyncHandler(async (req: any, res: Response, next: Ne
 
   if (req.file) {
     if (brand.logo) await imageService.deleteImage(brand.logo.toString())
-    brand.logo = (await imageService.saveImage(req.file.buffer, req.file.originalname, req.file.mimetype, req.user?.id)) as any
+    brand.logo = (await imageService.saveImage(req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, req.user?.id)) as any
   }
 
   await brand.save()

@@ -30,7 +30,7 @@ export const createCategory = asyncHandler(async (req: any, res: Response) => {
   }
 
   let imageId: string | undefined
-  if (req.file) imageId = await imageService.saveImage(req.file.buffer, req.file.originalname, req.file.mimetype, req.user?.id)
+  if (req.file) imageId = await imageService.saveImage(req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, req.user?.id)
 
   const category = await Category.create({ name, slug, description, parentCategory: parent, sortOrder, image: imageId })
   res.status(201).json(ApiResponse.success(category, "Category created"))
@@ -53,7 +53,7 @@ export const updateCategory = asyncHandler(async (req: any, res: Response, next:
 
   if (req.file) {
     if (category.image) await imageService.deleteImage(category.image.toString())
-    category.image = (await imageService.saveImage(req.file.buffer, req.file.originalname, req.file.mimetype, req.user?.id)) as any
+    category.image = (await imageService.saveImage(req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, req.user?.id)) as any
   }
 
   await category.save()
