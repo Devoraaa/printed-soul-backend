@@ -1,5 +1,5 @@
 import multer from "multer"
-import { AppError } from "./AppError"
+import { ApiError } from "../api/ApiError"
 
 import path from "path"
 import fs from "fs"
@@ -20,7 +20,7 @@ const fileFilter = (req: any, file: any, cb: any) => {
   if (allowedMimes.includes(file.mimetype)) {
     cb(null, true)
   } else {
-    cb(new AppError("Only JPEG, PNG and WebP images are allowed", 400))
+    cb(new ApiError(400, "Only JPEG, PNG and WebP images are allowed"))
   }
 }
 
