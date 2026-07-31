@@ -24,10 +24,15 @@ export const createCategory = asyncHandler(async (req: any, res: Response) => {
   const { name, description, parentCategory, sortOrder } = req.body
   const slug = slugify(name)
 
+  let parent = parentCategory;
+  if (!parent || parent === "null" || parent === "undefined" || parent === "") {
+    parent = undefined;
+  }
+
   let imageId: string | undefined
   if (req.file) imageId = await imageService.saveImage(req.file.buffer, req.file.originalname, req.file.mimetype, req.user?.id)
 
-  const category = await Category.create({ name, slug, description, parentCategory, sortOrder, image: imageId })
+  const category = await Category.create({ name, slug, description, parentCategory: parent, sortOrder, image: imageId })
   res.status(201).json(ApiResponse.success(category, "Category created"))
 })
 
@@ -35,8 +40,15 @@ export const updateCategory = asyncHandler(async (req: any, res: Response, next:
   const category = await Category.findById(req.params.id)
   if (!category) return next(new ApiError(404, "Category not found"))
 
-  const fields = ["name", "description", "parentCategory", "sortOrder", "isActive"]
+  const fields = ["name", "description", "sortOrder", "isActive"]
   fields.forEach((f) => { if (req.body[f] !== undefined) (category as any)[f] = req.body[f] })
+  
+  if (req.body.parentCategory !== undefined) {
+    let parent = req.body.parentCategory;
+    if (!parent || parent === "null" || parent === "undefined" || parent === "") parent = null;
+    category.parentCategory = parent;
+  }
+
   if (req.body.name) category.slug = slugify(req.body.name)
 
   if (req.file) {
