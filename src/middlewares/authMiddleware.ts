@@ -13,6 +13,12 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
   try {
     let token: string | undefined
 
+    // Allow Bot API Key bypass for internal services
+    if (req.headers["x-bot-api-key"] && req.headers["x-bot-api-key"] === process.env.BOT_API_KEY) {
+      req.user = { role: "superadmin", name: "WhatsApp Bot" }
+      return next()
+    }
+
     if (req.headers.authorization?.startsWith("Bearer")) {
       token = req.headers.authorization.split(" ")[1]
     } else if (req.cookies?.token) {
