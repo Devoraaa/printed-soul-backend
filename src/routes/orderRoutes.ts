@@ -1,20 +1,19 @@
 import { Router } from "express"
 import {
-  createOrder, verifyPayment, getMyOrders, getMyOrderById, cancelOrder,
+  createOrder, getMyOrders, getMyOrderById, cancelOrder,
   adminGetOrders, adminGetOrderById, adminUpdateOrderStatus, getOrderStats,
-  adminUpdateTracking, trackOrder, adminPushToShiprocket, handlePayuCallback
+  adminUpdateTracking, trackOrder, adminPushToDelhivery, handlePayuCallback
 } from "../controllers/orderController"
 import { protect, authorize } from "../middlewares/authMiddleware"
 
 const router = Router()
 
-// Public Tracking & PayU Callback
+// Public — Tracking & PayU Callback
 router.get("/track/:query", trackOrder)
 router.post("/payu/callback", handlePayuCallback)
 
 // Customer
 router.post("/", protect, createOrder)
-router.post("/razorpay/verify", protect, verifyPayment)
 router.get("/my", protect, getMyOrders)
 router.get("/my/:id", protect, getMyOrderById)
 router.put("/my/:id/cancel", protect, cancelOrder)
@@ -25,6 +24,6 @@ router.get("/admin", protect, authorize("admin", "superadmin"), adminGetOrders)
 router.get("/admin/:id", protect, authorize("admin", "superadmin"), adminGetOrderById)
 router.put("/admin/:id/status", protect, authorize("admin", "superadmin"), adminUpdateOrderStatus)
 router.put("/admin/:id/tracking", protect, authorize("admin", "superadmin"), adminUpdateTracking)
-router.post("/admin/:id/shiprocket", protect, authorize("admin", "superadmin"), adminPushToShiprocket)
+router.post("/admin/:id/delhivery", protect, authorize("admin", "superadmin"), adminPushToDelhivery)
 
 export default router

@@ -22,6 +22,10 @@ export interface IProduct extends Document {
   ratings: { average: number; count: number }
   weight?: number
   priority: number
+  /** Groups all case-type variants of the same design. e.g. "ronaldo-legacy-collage" */
+  designSlug?: string
+  /** Type of case for this variant */
+  caseType?: "dual-case" | "metal-case" | "glass-case" | "hard-case" | "soft-case" | "wallet-case" | "frame" | "tumbler" | "mug" | "other"
   createdAt: Date
   updatedAt: Date
 }
@@ -51,6 +55,12 @@ const productSchema = new Schema<IProduct>(
     },
     weight: { type: Number },
     priority: { type: Number, default: 0 },
+    designSlug: { type: String, lowercase: true, index: true },
+    caseType: {
+      type: String,
+      enum: ["dual-case", "metal-case", "glass-case", "hard-case", "soft-case", "wallet-case", "frame", "tumbler", "mug", "other"],
+      default: "other",
+    },
   },
   {
     timestamps: true,

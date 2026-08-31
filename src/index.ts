@@ -25,6 +25,7 @@ import imageRoutes from "./routes/imageRoutes"
 import automationRoutes from "./routes/automationRoutes"
 import bannerRoutes from "./routes/bannerRoutes"
 import botRoutes from "./routes/botRoutes"
+import socialPostRoutes from "./routes/socialPostRoutes"
 
 // Initialize background workers
 import "./workers/mockupWorker"
@@ -44,13 +45,18 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }))
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allowed origins: local dev + VPS domains from .env
-    const allowed = [
-      "http://localhost:5173",   // frontend dev
-      "http://localhost:5174",   // admin dev
-      process.env.CLIENT_URL,    // frontend VPS (e.g. https://printedsoul.com)
-      process.env.ADMIN_URL,     // admin VPS   (e.g. https://admin.printedsoul.com)
-    ].filter(Boolean) as string[]
+      // Allowed origins: local dev + VPS domains from .env
+      const allowed = [
+        "http://localhost:5173",   // frontend dev
+        "http://localhost:5174",   // admin dev
+        "http://localhost:5175",
+        "http://localhost:5176",
+        "http://localhost:5177",
+        "http://localhost:5178",
+        "http://localhost:5179",
+        process.env.CLIENT_URL,    // frontend VPS (e.g. https://printedsoul.com)
+        process.env.ADMIN_URL,     // admin VPS   (e.g. https://admin.printedsoul.com)
+      ].filter(Boolean) as string[]
 
     // Allow server-to-server requests (no origin) and whitelisted origins
     if (!origin || allowed.includes(origin)) {
@@ -101,6 +107,7 @@ app.use("/api/admin/automation", automationRoutes)
 app.use("/api/images", imageRoutes)
 app.use("/api/banners", bannerRoutes)
 app.use("/api/bot", botRoutes)
+app.use("/api/social-posts", socialPostRoutes)
 
 // ── 404 ───────────────────────────────────────────────────────────────────
 app.use("*", (req: Request, res: Response) => {

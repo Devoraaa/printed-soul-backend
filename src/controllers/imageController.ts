@@ -23,6 +23,7 @@ export const uploadImages = asyncHandler(async (req: any, res: Response, next: N
 })
 
 import path from "path"
+import fs from "fs"
 
 // Serve image by ID (public)
 export const serveImage = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
@@ -31,6 +32,13 @@ export const serveImage = asyncHandler(async (req: Request, res: Response, next:
 
   if (image.url && image.url.startsWith("/uploads")) {
     const filepath = path.join(__dirname, "../../public", image.url.replace(/^\//, ""))
+    
+    // Check if file exists to prevent 500 ENOENT error stack traces
+    if (!fs.existsSync(filepath)) {
+      // In local dev, images uploaded to VPS won't exist locally. Return 404 cleanly.
+      return res.status(404).json({ success: false, message: "Image not found on local filesystem" });
+    }
+
     res.set("Cache-Control", "public, max-age=31536000, immutable")
     return res.sendFile(filepath)
   }

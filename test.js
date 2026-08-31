@@ -1,0 +1,1 @@
+const m=require('mongoose'); m.connect('mongodb://127.0.0.1:27017/printedsoul').then(()=>m.connection.db.collection('categories').find({slug: 'iphone'}).toArray()).then(console.log).then(()=>process.exit(0))

@@ -24,7 +24,7 @@ router.post("/templates/upload", upload.single("template"), (req: any, res: any)
 
 router.post("/designs", upload.single("design"), async (req: any, res: any) => {
   try {
-    const { title, categoryId, phoneModelIds } = req.body
+    const { title, categoryId, phoneModelIds, price, comparePrice, stock, description, caseType } = req.body
     const modelIds = JSON.parse(phoneModelIds || "[]")
 
     if (!req.file) return res.status(400).json({ error: "design image is required" })
@@ -33,22 +33,81 @@ router.post("/designs", upload.single("design"), async (req: any, res: any) => {
     const filename = req.file.filename
     const imageUrl = `/uploads/${filename}`
 
-    const designData: any = {
-      title,
-      imageUrl,
-      totalModels: modelIds.length,
-      status: "processing",
+    // ── Auto-resolve category ────────────────────────────────────────────────
+    // Map caseType → friendly category name
+    const CASE_TYPE_CATEGORY: Record<string, string> = {
+      "dual-case":   "Dual Case",
+      "metal-case":  "Metal Case",
+      "glass-case":  "Glass Case",
+      "hard-case":   "Hard Case",
+      "soft-case":   "Soft Case",
+      "wallet-case": "Wallet Case",
+      "frame":       "Frames & Art",
+      "tumbler":     "Tumblers",
+      "mug":         "Mugs",
     }
-    if (categoryId && categoryId !== "null" && categoryId !== "undefined") {
-      designData.categoryId = categoryId;
+    const { Category } = await import("../models/Category")
+    const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")
+
+    let resolvedCategoryId = (categoryId && categoryId !== "null" && categoryId !== "undefined") ? categoryId : null
+
+    async function getOrCreateCategory(name: string, slug: string) {
+      // 1. Try to find active category
+      let c = await Category.findOne({ slug })
+      
+      // 2. Try to find soft-deleted category (plugin requires exact true match to bypass)
+      if (!c) {
+        c = await Category.findOne({ slug, isDeleted: true })
+        if (c) {
+          // Restore it
+          ;(c as any).isDeleted = false
+          ;(c as any).deletedAt = null
+          await c.save()
+        }
+      }
+      
+      // 3. Create if completely missing
+      if (!c) {
+        c = await Category.create({ name, slug, isActive: true })
+      }
+      return c._id.toString()
     }
 
-    const design = await Design.create(designData)
+    if (!resolvedCategoryId && caseType && CASE_TYPE_CATEGORY[caseType]) {
+      const catName = CASE_TYPE_CATEGORY[caseType]
+      resolvedCategoryId = await getOrCreateCategory(catName, slugify(catName))
+    }
+
+    if (!resolvedCategoryId) {
+      resolvedCategoryId = await getOrCreateCategory("Phone Cover", "phone-cover")
+    }
+
+    // ── Build designSlug from title ─────────────────────────────────────────
+    const designSlug = slugify(title)
+
+    // ── Build full product title (design + case type label) ─────────────────
+    const caseLabel = caseType ? CASE_TYPE_CATEGORY[caseType] : ""
+    const fullTitle = caseLabel ? `${title} - ${caseLabel}` : title
+
+    const design = await Design.create({
+      title: fullTitle,
+      imageUrl,
+      categoryId: resolvedCategoryId,
+      totalModels: modelIds.length,
+      status: "processing",
+    })
+
+    // ── Queue jobs — pass all per-product data ──────────────────────────────
+    const jobExtras: any = { designSlug, caseType: caseType || "hard-case" }
+    if (price)        jobExtras.price = parseFloat(price)
+    if (comparePrice) jobExtras.comparePrice = parseFloat(comparePrice)
+    if (stock)        jobExtras.stock = parseInt(stock)
+    if (description)  jobExtras.description = description
 
     await mockupQueue.addBulk(
       modelIds.map((phoneModelId: string) => ({
         name: "generate-mockup",
-        data: { designId: design._id.toString(), phoneModelId },
+        data: { designId: design._id.toString(), phoneModelId, ...jobExtras },
       }))
     )
 
@@ -58,6 +117,7 @@ router.post("/designs", upload.single("design"), async (req: any, res: any) => {
     res.status(500).json({ message: err.message || "Failed to create design job" })
   }
 })
+
 
 router.post("/designs/:id/add-models", async (req: any, res: any) => {
   try {

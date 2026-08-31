@@ -168,6 +168,8 @@ export const mockupWorker = new Worker(
         status: "draft",
         stock: finalStock,
         sku,
+        caseType: job.data.caseType || "hard-case",
+        designSlug: job.data.designSlug || undefined,
         $addToSet: { images: { $each: allImages } },
       },
       { upsert: true, new: true }

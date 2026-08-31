@@ -6,23 +6,18 @@ import { Address } from "../models/Address"
 import { ApiError } from "../api/ApiError"
 import { ApiResponse } from "../api/ApiResponse"
 import { asyncHandler } from "../api/asyncHandler"
-import { QueryFeatures } from "../api/QueryFeatures"
-import { razorpayService } from "../services/razorpayService"
 import { emailService } from "../services/emailService"
 import { OrderStatus } from "../models/Order"
-
-// ── Customer: Create Order ─────────────────────────────────────────────────
 import { payuService } from "../services/payuService"
+import { delhiveryService } from "../services/delhiveryService"
 
-// ── Customer: Create Order (Prepaid via PayU) ──────────────────────────────
+// ── Customer: Create Order (Prepaid via PayU only) ─────────────────────────
 export const createOrder = asyncHandler(async (req: any, res: Response, next: NextFunction) => {
   const { shippingAddressId, notes } = req.body
 
-  // Get cart
   const cart = await Cart.findOne({ user: req.user.id }).populate("items.product")
   if (!cart || cart.items.length === 0) return next(new ApiError(400, "Cart is empty"))
 
-  // Get address
   const address = await Address.findOne({ _id: shippingAddressId, user: req.user.id })
   if (!address) return next(new ApiError(404, "Shipping address not found"))
 
@@ -42,7 +37,7 @@ export const createOrder = asyncHandler(async (req: any, res: Response, next: Ne
   }
 
   const itemsTotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0)
-  const shippingCharge = itemsTotal >= 499 ? 0 : 49 // Free shipping above ₹499
+  const shippingCharge = itemsTotal >= 499 ? 0 : 49
   const totalAmount = itemsTotal + shippingCharge
 
   const shippingAddress = {
@@ -117,12 +112,12 @@ export const createOrder = asyncHandler(async (req: any, res: Response, next: Ne
           actionUrl: payuData.actionUrl,
         },
       },
-      "Prepaid order created — proceed to PayU payment"
+      "Order created — proceed to PayU payment"
     )
   )
 })
 
-// ── PayU Response Callback & Auto Shiprocket Sync ────────────────────────
+// ── PayU Callback → Auto-push to Delhivery on payment success ─────────────
 export const handlePayuCallback = asyncHandler(async (req: Request, res: Response) => {
   const payload = req.body
   const isValidHash = payuService.verifyResponseHash(payload)
@@ -144,28 +139,34 @@ export const handlePayuCallback = asyncHandler(async (req: Request, res: Respons
     order.statusHistory.push({
       status: "processing",
       timestamp: new Date(),
-      note: `Prepaid Payment received via PayU (MihPayID: ${mihpayid || "N/A"})`,
+      note: `Payment received via PayU (MihPayID: ${mihpayid || "N/A"})`,
     })
 
-    // AUTO PUSH TO SHIPROCKET UPON SUCCESSFUL PREPAID PAYMENT!
+    // ── AUTO-PUSH TO DELHIVERY ONE ──────────────────────────────────────
     try {
-      const { trackingService } = require("../services/trackingService")
-      const shiprocketResult = await trackingService.createShiprocketOrder(order)
-      if (shiprocketResult.success) {
-        order.courierPartner = "Shiprocket"
-        if (shiprocketResult.awbCode) {
-          order.trackingNumber = shiprocketResult.awbCode
-          order.trackingUrl = trackingService.generateTrackingUrl("Shiprocket", shiprocketResult.awbCode)
-        }
+      const result = await delhiveryService.createShipment(order)
+      if (result.success && result.awbCode) {
+        order.courierPartner = "Delhivery"
+        order.trackingNumber = result.awbCode
+        order.trackingUrl = delhiveryService.generateTrackingUrl(result.awbCode)
         order.statusHistory.push({
           status: "processing",
           timestamp: new Date(),
-          note: `Auto-created shipment in Shiprocket (Order ID: ${shiprocketResult.shiprocketOrderId || "N/A"})`,
+          note: `Shipment auto-created on Delhivery One (AWB: ${result.awbCode})`,
+        })
+        console.log(`✅ Delhivery shipment created — AWB: ${result.awbCode}`)
+      } else {
+        console.error(`⚠️ Delhivery auto-create failed: ${result.message}`)
+        order.statusHistory.push({
+          status: "processing",
+          timestamp: new Date(),
+          note: `Delhivery auto-create failed: ${result.message} — push manually from admin panel`,
         })
       }
-    } catch (shipErr: any) {
-      console.error("Auto Shiprocket sync error on payment success:", shipErr.message)
+    } catch (delErr: any) {
+      console.error("Delhivery auto-push error:", delErr.message)
     }
+    // ────────────────────────────────────────────────────────────────────
 
     await order.save()
 
@@ -188,32 +189,6 @@ export const handlePayuCallback = asyncHandler(async (req: Request, res: Respons
   }
 })
 
-// ── Customer: Verify Razorpay Payment ─────────────────────────────────────
-export const verifyPayment = asyncHandler(async (req: any, res: Response, next: NextFunction) => {
-  const { orderId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body
-
-  const order = await Order.findOne({ _id: orderId, user: req.user.id })
-  if (!order) return next(new ApiError(404, "Order not found"))
-
-  const isValid = razorpayService.verifyPayment(razorpayOrderId, razorpayPaymentId, razorpaySignature)
-  if (!isValid) {
-    order.paymentStatus = "failed"
-    await order.save()
-    return next(new ApiError(400, "Payment verification failed"))
-  }
-
-  order.paymentStatus = "paid"
-  order.razorpayPaymentId = razorpayPaymentId
-  order.razorpaySignature = razorpaySignature
-  order.status = "processing"
-  order.statusHistory.push({ status: "processing", timestamp: new Date(), note: "Payment received" })
-  await order.save()
-
-  emailService.sendOrderConfirmation(req.user.email, req.user.name, order).catch(() => {})
-
-  res.json(ApiResponse.success(order, "Payment verified — order confirmed"))
-})
-
 // ── Customer: My Orders ────────────────────────────────────────────────────
 export const getMyOrders = asyncHandler(async (req: any, res: Response) => {
   const page = parseInt(req.query.page as string) || 1
@@ -234,6 +209,7 @@ export const getMyOrderById = asyncHandler(async (req: any, res: Response, next:
   res.json(ApiResponse.success(order, "Order retrieved"))
 })
 
+// ── Customer: Cancel Order + Delhivery cancel ─────────────────────────────
 export const cancelOrder = asyncHandler(async (req: any, res: Response, next: NextFunction) => {
   const order = await Order.findOne({ _id: req.params.id, user: req.user.id })
   if (!order) return next(new ApiError(404, "Order not found"))
@@ -250,6 +226,28 @@ export const cancelOrder = asyncHandler(async (req: any, res: Response, next: Ne
   // Restore stock
   for (const item of order.items) {
     await Product.findByIdAndUpdate(item.product, { $inc: { stock: item.quantity } })
+  }
+
+  // Cancel shipment on Delhivery if AWB exists
+  if (order.trackingNumber && order.courierPartner?.toLowerCase().includes("delhivery")) {
+    try {
+      const cancelResult = await delhiveryService.cancelShipment(order.trackingNumber)
+      if (cancelResult.success) {
+        order.statusHistory.push({
+          status: "cancelled",
+          timestamp: new Date(),
+          note: `Delhivery shipment (AWB: ${order.trackingNumber}) cancelled successfully`,
+        })
+      } else {
+        order.statusHistory.push({
+          status: "cancelled",
+          timestamp: new Date(),
+          note: `Delhivery cancel attempt: ${cancelResult.message}`,
+        })
+      }
+    } catch (err: any) {
+      console.error("Delhivery cancel error on customer cancel:", err.message)
+    }
   }
 
   await order.save()
@@ -281,6 +279,7 @@ export const adminGetOrderById = asyncHandler(async (req: Request, res: Response
   res.json(ApiResponse.success(order, "Order retrieved"))
 })
 
+// ── Admin: Update Status + auto Delhivery cancel on cancelled ─────────────
 export const adminUpdateOrderStatus = asyncHandler(async (req: any, res: Response, next: NextFunction) => {
   const { status, trackingNumber, note } = req.body
   const order = await Order.findById(req.params.id).populate("user", "name email")
@@ -289,11 +288,26 @@ export const adminUpdateOrderStatus = asyncHandler(async (req: any, res: Respons
   order.status = status
   if (trackingNumber) order.trackingNumber = trackingNumber
   order.statusHistory.push({ status, timestamp: new Date(), note: note || `Status updated to ${status}` })
+
+  // If admin cancels and there's a Delhivery AWB → cancel on Delhivery too
+  if (status === "cancelled" && order.trackingNumber && order.courierPartner?.toLowerCase().includes("delhivery")) {
+    try {
+      const cancelResult = await delhiveryService.cancelShipment(order.trackingNumber)
+      order.statusHistory.push({
+        status: "cancelled",
+        timestamp: new Date(),
+        note: cancelResult.success
+          ? `Delhivery shipment (AWB: ${order.trackingNumber}) cancelled`
+          : `Delhivery cancel attempt failed: ${cancelResult.message}`,
+      })
+    } catch (err: any) {
+      console.error("Delhivery cancel error on admin cancel:", err.message)
+    }
+  }
+
   await order.save()
 
   const user = order.user as any
-
-  // Send email notifications on key status changes
   if (status === "shipped") {
     emailService.sendShippingNotification(user.email, user.name, order).catch(() => {})
   } else if (status === "delivered") {
@@ -301,6 +315,36 @@ export const adminUpdateOrderStatus = asyncHandler(async (req: any, res: Respons
   }
 
   res.json(ApiResponse.success(order, `Order status updated to ${status}`))
+})
+
+// ── Admin: Manual Push to Delhivery (if auto-push failed) ─────────────────
+export const adminPushToDelhivery = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const order = await Order.findById(req.params.id).populate("user", "name email")
+  if (!order) return next(new ApiError(404, "Order not found"))
+
+  if (order.paymentStatus !== "paid") {
+    return next(new ApiError(400, "Cannot push unpaid order to Delhivery"))
+  }
+
+  const result = await delhiveryService.createShipment(order)
+
+  if (!result.success) {
+    return next(new ApiError(400, result.message || "Failed to push order to Delhivery"))
+  }
+
+  order.courierPartner = "Delhivery"
+  if (result.awbCode) {
+    order.trackingNumber = result.awbCode
+    order.trackingUrl = delhiveryService.generateTrackingUrl(result.awbCode)
+  }
+  order.statusHistory.push({
+    status: order.status,
+    timestamp: new Date(),
+    note: `Shipment manually pushed to Delhivery (AWB: ${result.awbCode || "pending"})`,
+  })
+
+  await order.save()
+  res.json(ApiResponse.success({ order, delhivery: result }, "Order successfully pushed to Delhivery"))
 })
 
 // ── Admin: Dashboard Stats ─────────────────────────────────────────────────
@@ -325,7 +369,7 @@ export const getOrderStats = asyncHandler(async (req: Request, res: Response) =>
   }, "Order stats retrieved"))
 })
 
-// ── Admin: Update Tracking & Logistics ─────────────────────────────────────
+// ── Admin: Update Tracking Manually ───────────────────────────────────────
 export const adminUpdateTracking = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { trackingNumber, courierPartner, estimatedDelivery, trackingUrl, updateStatusToShipped } = req.body
   const order = await Order.findById(req.params.id).populate("user", "name email")
@@ -338,8 +382,7 @@ export const adminUpdateTracking = asyncHandler(async (req: Request, res: Respon
   if (trackingUrl) {
     order.trackingUrl = trackingUrl
   } else if (trackingNumber) {
-    const { trackingService } = require("../services/trackingService")
-    order.trackingUrl = trackingService.generateTrackingUrl(courierPartner || order.courierPartner || "Shiprocket", trackingNumber)
+    order.trackingUrl = delhiveryService.generateTrackingUrl(trackingNumber)
   }
 
   if (updateStatusToShipped || (order.status !== "shipped" && order.status !== "delivered")) {
@@ -347,7 +390,7 @@ export const adminUpdateTracking = asyncHandler(async (req: Request, res: Respon
     order.statusHistory.push({
       status: "shipped",
       timestamp: new Date(),
-      note: `Dispatched via ${order.courierPartner || "Courier"} (AWB: ${order.trackingNumber})`
+      note: `Dispatched via ${order.courierPartner || "Delhivery"} (AWB: ${order.trackingNumber})`,
     })
   }
 
@@ -355,13 +398,13 @@ export const adminUpdateTracking = asyncHandler(async (req: Request, res: Respon
 
   const user = order.user as any
   if (user?.email) {
-    emailService.sendShippingNotification(user.email, user.name || "Valued Customer", order).catch(() => {})
+    emailService.sendShippingNotification(user.email, user.name || "Customer", order).catch(() => {})
   }
 
-  res.json(ApiResponse.success(order, "Tracking information updated and customer notified"))
+  res.json(ApiResponse.success(order, "Tracking updated and customer notified"))
 })
 
-// ── Public: Track Order by Number or AWB ─────────────────────────────────
+// ── Public: Track Order ────────────────────────────────────────────────────
 export const trackOrder = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const query = (req.params.query || "").trim()
   if (!query) return next(new ApiError(400, "Please provide Order ID or AWB Number"))
@@ -371,38 +414,11 @@ export const trackOrder = asyncHandler(async (req: Request, res: Response, next:
     $or: [
       { orderNumber: { $regex: new RegExp(`^${query}$`, "i") } },
       { trackingNumber: { $regex: new RegExp(`^${query}$`, "i") } },
-      ...(mongoose.isValidObjectId(query) ? [{ _id: query }] : [])
-    ]
+      ...(mongoose.isValidObjectId(query) ? [{ _id: query }] : []),
+    ],
   }).populate("items.product", "name images coverImage price")
 
   if (!order) return next(new ApiError(404, "No order found matching this Order Number or AWB"))
 
   res.json(ApiResponse.success(order, "Order tracking info retrieved"))
-})
-
-// ── Admin: Push Order to Shiprocket ─────────────────────────────────────────
-export const adminPushToShiprocket = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const order = await Order.findById(req.params.id).populate("user", "name email")
-  if (!order) return next(new ApiError(404, "Order not found"))
-
-  const { trackingService } = require("../services/trackingService")
-  const result = await trackingService.createShiprocketOrder(order)
-
-  if (!result.success) {
-    return next(new ApiError(400, result.message || "Failed to push order to Shiprocket"))
-  }
-
-  order.courierPartner = "Shiprocket"
-  if (result.awbCode) {
-    order.trackingNumber = result.awbCode
-    order.trackingUrl = trackingService.generateTrackingUrl("Shiprocket", result.awbCode)
-  }
-  order.statusHistory.push({
-    status: order.status,
-    timestamp: new Date(),
-    note: `Shipment created in Shiprocket (Order ID: ${result.shiprocketOrderId || "N/A"})`
-  })
-
-  await order.save()
-  res.json(ApiResponse.success({ order, shiprocket: result }, "Order successfully pushed to Shiprocket"))
 })

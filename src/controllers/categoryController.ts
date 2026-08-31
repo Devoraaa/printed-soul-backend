@@ -40,6 +40,7 @@ export const updateCategory = asyncHandler(async (req: any, res: Response, next:
   const category = await Category.findById(req.params.id)
   if (!category) return next(new ApiError(404, "Category not found"))
 
+  // Allow editing name, description, sortOrder, isActive — but never isProtected
   const fields = ["name", "description", "sortOrder", "isActive"]
   fields.forEach((f) => { if (req.body[f] !== undefined) (category as any)[f] = req.body[f] })
   
@@ -63,6 +64,12 @@ export const updateCategory = asyncHandler(async (req: any, res: Response, next:
 export const deleteCategory = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const category = await Category.findById(req.params.id)
   if (!category) return next(new ApiError(404, "Category not found"))
+
+  // 🔒 Protected categories cannot be deleted
+  if (category.isProtected) {
+    return next(new ApiError(403, `"${category.name}" is a protected category and cannot be deleted. You can only edit its name and image.`))
+  }
+
   await (category as any).softDelete()
   res.json(ApiResponse.success({}, "Category deleted"))
 })

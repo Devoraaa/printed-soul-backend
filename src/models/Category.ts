@@ -8,6 +8,7 @@ export interface ICategory extends Document {
   image?: mongoose.Types.ObjectId
   parentCategory?: mongoose.Types.ObjectId
   isActive: boolean
+  isProtected: boolean   // If true, this category cannot be deleted
   sortOrder: number
   createdAt: Date
   updatedAt: Date
@@ -21,6 +22,7 @@ const categorySchema = new Schema<ICategory>(
     image: { type: Schema.Types.ObjectId, ref: "Image" },
     parentCategory: { type: Schema.Types.ObjectId, ref: "Category", default: null },
     isActive: { type: Boolean, default: true },
+    isProtected: { type: Boolean, default: false },
     sortOrder: { type: Number, default: 0 },
   },
   { timestamps: true }

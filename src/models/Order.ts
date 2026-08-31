@@ -107,7 +107,7 @@ const orderSchema = new Schema<IOrder>(
       },
     ],
     trackingNumber: { type: String },
-    courierPartner: { type: String, default: "Shiprocket" },
+    courierPartner: { type: String, default: "Delhivery" },
     trackingUrl: { type: String },
     estimatedDelivery: { type: Date },
     notes: { type: String },
