@@ -4,7 +4,7 @@ import {
   adminGetOrders, adminGetOrderById, adminUpdateOrderStatus, getOrderStats,
   adminUpdateTracking, trackOrder, adminPushToDelhivery, handlePayuCallback
 } from "../controllers/orderController"
-import { protect, authorize } from "../middlewares/authMiddleware"
+import { protect, authorize, optionalAuth } from "../middlewares/authMiddleware"
 
 const router = Router()
 
@@ -12,8 +12,8 @@ const router = Router()
 router.get("/track/:query", trackOrder)
 router.post("/payu/callback", handlePayuCallback)
 
-// Customer
-router.post("/", protect, createOrder)
+// Customer (Optional Auth for Guest Checkout)
+router.post("/", optionalAuth, createOrder)
 router.get("/my", protect, getMyOrders)
 router.get("/my/:id", protect, getMyOrderById)
 router.put("/my/:id/cancel", protect, cancelOrder)

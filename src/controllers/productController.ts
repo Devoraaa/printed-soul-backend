@@ -75,11 +75,36 @@ export const getProducts = asyncHandler(async (req: Request, res: Response) => {
     delete queryObj.category
   }
 
-  // ── Device Model filter ─────────────────────────────────────────────────
+  // Brand filter
+  if (queryObj.brand) {
+    const brandIdOrSlug = queryObj.brand as string
+    const brandDoc = await mongoose.model("Brand").findOne({
+      $or: [
+        { _id: mongoose.isValidObjectId(brandIdOrSlug) ? brandIdOrSlug : null },
+        { slug: brandIdOrSlug }
+      ]
+    })
+    if (brandDoc) {
+      baseQuery = baseQuery.find({ brand: brandDoc._id } as any)
+    } else if (mongoose.isValidObjectId(brandIdOrSlug)) {
+      baseQuery = baseQuery.find({ brand: brandIdOrSlug } as any)
+    }
+    delete queryObj.brand
+  }
+
+  // Device Model filter
   if (queryObj.deviceModel) {
-    const dmId = queryObj.deviceModel as string
-    if (mongoose.isValidObjectId(dmId)) {
-      baseQuery = baseQuery.find({ deviceModels: { $in: [dmId] } } as any)
+    const dmIdOrSlug = queryObj.deviceModel as string
+    const dmDoc = await mongoose.model("DeviceModel").findOne({
+      $or: [
+        { _id: mongoose.isValidObjectId(dmIdOrSlug) ? dmIdOrSlug : null },
+        { slug: dmIdOrSlug }
+      ]
+    })
+    if (dmDoc) {
+      baseQuery = baseQuery.find({ deviceModels: { $in: [dmDoc._id] } } as any)
+    } else if (mongoose.isValidObjectId(dmIdOrSlug)) {
+      baseQuery = baseQuery.find({ deviceModels: { $in: [dmIdOrSlug] } } as any)
     }
     delete queryObj.deviceModel
   }
@@ -368,15 +393,24 @@ export const getDesignVariants = asyncHandler(async (req: Request, res: Response
     return res.json(ApiResponse.success({ showSwitcher: false, variants: [] }, "No case switcher for this product type"))
   }
 
-  // Mark each variant: is it available for the requested device model?
-  const result = variants
-    .filter((v: any) => MOBILE_CASE_TYPES.has(v.caseType)) // only include mobile case variants
-    .map((v: any) => {
-      const available = deviceModel
-        ? v.deviceModels?.some((dm: any) => dm.toString() === deviceModel.toString())
-        : true
-      return { ...v, available }
-    })
+  // Mark each caseType: is it available for the requested device model?
+  // Since we have separate products per model, we group by caseType.
+  const groupedVariants = new Map<string, any>()
+
+  variants.forEach((v: any) => {
+    if (!MOBILE_CASE_TYPES.has(v.caseType)) return
+    
+    const isModelMatch = deviceModel 
+      ? v.deviceModels?.some((dm: any) => dm.toString() === deviceModel.toString())
+      : true
+
+    // If we haven't seen this caseType, or if the current variant is a match (and the stored one isn't)
+    if (!groupedVariants.has(v.caseType) || isModelMatch) {
+      groupedVariants.set(v.caseType, { ...v, available: !!isModelMatch })
+    }
+  })
+
+  const result = Array.from(groupedVariants.values())
 
   // Sort: available first, then fixed order: dual → glass → metal → hard → soft → wallet
   const ORDER: Record<string, number> = { "dual-case": 0, "glass-case": 1, "metal-case": 2, "hard-case": 3, "soft-case": 4, "wallet-case": 5 }

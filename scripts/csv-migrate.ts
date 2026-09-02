@@ -28,6 +28,8 @@ const productSchema = new mongoose.Schema({
   deviceModels: [{ type: mongoose.Schema.Types.ObjectId, ref: 'DeviceModel' }],
   tags: [String], isActive: Boolean, ratings: { average: { type: Number, default: 0 }, count: { type: Number, default: 0 } },
   shopifyId: { type: String, sparse: true },
+  isDeleted: { type: Boolean, default: false },
+  status: { type: String, default: "active" }
 }, { timestamps: true })
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true }, email: { type: String, required: true },
@@ -151,7 +153,7 @@ async function run() {
       if (!cat) cat = await Category.create({ name: categoryName, slug: slugify(categoryName) })
 
       // 2. Assign device models ONLY for mobile cases
-      const assignedDeviceModels = parsed.isMobileCover ? allDeviceModelIds : []
+      const assignedDeviceModels = parsed.isMobileCase ? allDeviceModelIds : []
 
       // 3. Download Images
       const imgIds: string[] = []

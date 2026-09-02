@@ -10,29 +10,65 @@ import { emailService } from "../services/emailService"
 import { OrderStatus } from "../models/Order"
 import { payuService } from "../services/payuService"
 import { delhiveryService } from "../services/delhiveryService"
+import { User } from "../models/User"
 
-// ── Customer: Create Order (Prepaid via PayU only) ─────────────────────────
+// Customer & Guest: Create Order (Prepaid via PayU only)
 export const createOrder = asyncHandler(async (req: any, res: Response, next: NextFunction) => {
-  const { shippingAddressId, notes } = req.body
+  const { items: guestItems, shippingAddress: guestAddress, shippingAddressId, notes, guestEmail, guestName, guestPhone } = req.body
 
-  const cart = await Cart.findOne({ user: req.user.id }).populate("items.product")
-  if (!cart || cart.items.length === 0) return next(new ApiError(400, "Cart is empty"))
+  let userId = req.user?.id
+  let userEmail = req.user?.email || guestEmail
 
-  const address = await Address.findOne({ _id: shippingAddressId, user: req.user.id })
-  if (!address) return next(new ApiError(404, "Shipping address not found"))
+  // 1. Resolve User
+  if (!userId) {
+    if (!guestEmail || !guestName || !guestPhone) {
+      return next(new ApiError(400, "Guest checkout requires email, name, and phone"))
+    }
+    let user = await User.findOne({ email: guestEmail.toLowerCase() })
+    if (!user) {
+      user = await User.create({
+        name: guestName,
+        email: guestEmail.toLowerCase(),
+        phone: guestPhone,
+        password: Math.random().toString(36).slice(-10),
+        role: "user",
+        isVerified: false
+      })
+    }
+    userId = user._id
+    userEmail = user.email
+  }
 
-  // Build order items + validate stock
+  // 2. Resolve Items
+  let orderItemsRaw = guestItems
+  let cartDoc = null
+  if (!orderItemsRaw && userId) {
+    cartDoc = await Cart.findOne({ user: userId }).populate("items.product")
+    if (cartDoc) {
+      orderItemsRaw = cartDoc.items.map((i: any) => ({
+        productId: i.product._id,
+        quantity: i.quantity,
+        productObj: i.product
+      }))
+    }
+  }
+
+  if (!orderItemsRaw || orderItemsRaw.length === 0) {
+    return next(new ApiError(400, "No items to order"))
+  }
+
   const items: any[] = []
-  for (const cartItem of cart.items) {
-    const product = cartItem.product as any
-    if (product.stock < cartItem.quantity) {
+  for (const rawItem of orderItemsRaw) {
+    const product = rawItem.productObj || await Product.findById(rawItem.productId || rawItem.product)
+    if (!product) return next(new ApiError(404, "Product not found"))
+    if (product.stock < rawItem.quantity) {
       return next(new ApiError(400, `Insufficient stock for ${product.name}`))
     }
     items.push({
       product: product._id,
       name: product.name,
       price: product.price,
-      quantity: cartItem.quantity,
+      quantity: rawItem.quantity,
     })
   }
 
@@ -40,22 +76,32 @@ export const createOrder = asyncHandler(async (req: any, res: Response, next: Ne
   const shippingCharge = itemsTotal >= 499 ? 0 : 49
   const totalAmount = itemsTotal + shippingCharge
 
-  const shippingAddress = {
-    label: address.label,
-    fullName: address.fullName,
-    phone: address.phone,
-    street: address.street,
-    city: address.city,
-    state: address.state,
-    pincode: address.pincode,
-    country: address.country,
-    isDefault: address.isDefault,
+  // 3. Resolve Address
+  let finalAddress: any = guestAddress
+  if (shippingAddressId) {
+    const dbAddress = await Address.findOne({ _id: shippingAddressId, user: userId })
+    if (!dbAddress) return next(new ApiError(404, "Shipping address not found"))
+    finalAddress = {
+      label: dbAddress.label,
+      fullName: dbAddress.fullName,
+      phone: dbAddress.phone,
+      street: dbAddress.street,
+      city: dbAddress.city,
+      state: dbAddress.state,
+      pincode: dbAddress.pincode,
+      country: dbAddress.country,
+      isDefault: dbAddress.isDefault,
+    }
+  }
+
+  if (!finalAddress || !finalAddress.fullName || !finalAddress.street || !finalAddress.city || !finalAddress.state || !finalAddress.pincode) {
+    return next(new ApiError(400, "Incomplete shipping address"))
   }
 
   const order = await Order.create({
-    user: req.user.id,
+    user: userId,
     items,
-    shippingAddress,
+    shippingAddress: finalAddress,
     paymentMethod: "payu",
     paymentStatus: "pending",
     itemsTotal,
@@ -65,27 +111,26 @@ export const createOrder = asyncHandler(async (req: any, res: Response, next: Ne
     status: "pending",
   })
 
-  // Deduct stock
-  for (const cartItem of cart.items) {
-    await Product.findByIdAndUpdate((cartItem.product as any)._id, {
-      $inc: { stock: -cartItem.quantity },
+  for (const item of items) {
+    await Product.findByIdAndUpdate(item.product, {
+      $inc: { stock: -item.quantity },
     })
   }
 
-  // Clear cart
-  cart.items = []
-  await cart.save()
+  if (cartDoc) {
+    cartDoc.items = []
+    await cartDoc.save()
+  }
 
-  // Generate PayU payment parameters
-  const clientOrigin = process.env.CLIENT_URL || "http://localhost:5173"
   const apiOrigin = process.env.API_URL || "http://localhost:5000"
+  
   const payuParams = {
     txnid: order.orderNumber,
     amount: totalAmount,
     productinfo: `Printed Soul Order #${order.orderNumber}`,
-    firstname: address.fullName.split(" ")[0],
-    email: req.user.email || "customer@printedsoul.in",
-    phone: address.phone,
+    firstname: finalAddress.fullName.split(" ")[0],
+    email: userEmail,
+    phone: finalAddress.phone,
     surl: `${apiOrigin}/api/orders/payu/callback`,
     furl: `${apiOrigin}/api/orders/payu/callback`,
   }
@@ -175,7 +220,7 @@ export const handlePayuCallback = asyncHandler(async (req: Request, res: Respons
       emailService.sendOrderConfirmation(user.email, user.name || "Customer", order).catch(() => {})
     }
 
-    return res.redirect(`${clientOrigin}/order-success/${order._id}`)
+    return res.redirect(`${clientOrigin}/order-success/${order.orderNumber}`)
   } else {
     order.paymentStatus = "failed"
     order.statusHistory.push({
