@@ -48,14 +48,22 @@ export async function generateSingleMockup(
   const pY = Math.round(printArea.y)
   const printRx = Math.round(printArea.borderRadius || 0)
 
+  const templateMetadata = await sharp(templateBuffer).metadata();
+  const tWidth = templateMetadata.width || 800;
+  const tHeight = templateMetadata.height || 800;
+
+  // Clamp print area so it doesn't overflow the base template image (causes Sharp to crash)
+  const safePWidth = Math.min(pWidth, tWidth - pX);
+  const safePHeight = Math.min(pHeight, tHeight - pY);
+
   const resizedDesign = await sharp(designBuffer)
-    .resize(pWidth, pHeight, { fit: "cover" })
+    .resize(safePWidth, safePHeight, { fit: "cover" })
     .png()
     .toBuffer()
 
-  let maskSvg = `<svg width="${pWidth}" height="${pHeight}">
+  let maskSvg = `<svg width="${safePWidth}" height="${safePHeight}">
     <mask id="cutout">
-      <rect width="${pWidth}" height="${pHeight}" fill="white" rx="${printRx}" />`
+      <rect width="${safePWidth}" height="${safePHeight}" fill="white" rx="${printRx}" />`
 
   if (cameraArea && cameraArea.width > 0 && cameraArea.height > 0) {
     const camX = Math.round(cameraArea.x) - pX
@@ -66,7 +74,7 @@ export async function generateSingleMockup(
     maskSvg += `<rect x="${camX}" y="${camY}" width="${camWidth}" height="${camHeight}" fill="black" rx="${camRx}" />`
   }
   
-  maskSvg += `</mask><rect width="${pWidth}" height="${pHeight}" fill="white" mask="url(#cutout)" /></svg>`
+  maskSvg += `</mask><rect width="${safePWidth}" height="${safePHeight}" fill="white" mask="url(#cutout)" /></svg>`
 
   const maskedDesign = await sharp(resizedDesign)
     .composite([{ input: Buffer.from(maskSvg), blend: 'dest-in' }])
@@ -79,9 +87,13 @@ export async function generateSingleMockup(
   // Apply Overlay Mask for 3D Effect if provided
   if (overlayUrl) {
     const overlayBuffer = await fetchAsBuffer(overlayUrl)
-    // Assuming overlay is same size as template
+    // Force overlay to perfectly match the base template dimensions to avoid Sharp crashes
+    const resizedOverlay = await sharp(overlayBuffer)
+      .resize(tWidth, tHeight, { fit: 'fill' })
+      .toBuffer()
+      
     mockupBuffer = await sharp(mockupBuffer)
-      .composite([{ input: overlayBuffer, blend: 'over' }])
+      .composite([{ input: resizedOverlay, blend: 'over' }])
       .jpeg({ quality: 85 })
       .toBuffer()
   }
