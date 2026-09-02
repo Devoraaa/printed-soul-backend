@@ -21,8 +21,15 @@ export async function fetchAsBuffer(urlOrPath: string): Promise<Buffer> {
     return Buffer.from(res.data)
   }
   // Local file
-  const localPath = path.join(__dirname, "../../public", urlOrPath)
-  return fs.promises.readFile(localPath)
+  const safePath = urlOrPath.replace(/^\/api\//, "").replace(/^\/+/, "")
+  let filepath = path.join(__dirname, "../../public", safePath)
+  
+  if (!fs.existsSync(filepath)) {
+    // Fallback just in case
+    filepath = path.join(__dirname, "../../", safePath)
+  }
+  
+  return fs.readFileSync(filepath)
 }
 
 export async function generateSingleMockup(
@@ -35,31 +42,38 @@ export async function generateSingleMockup(
 ): Promise<Buffer> {
   const templateBuffer = await fetchAsBuffer(templateUrl)
 
+  const pWidth = Math.round(printArea.width)
+  const pHeight = Math.round(printArea.height)
+  const pX = Math.round(printArea.x)
+  const pY = Math.round(printArea.y)
+  const printRx = Math.round(printArea.borderRadius || 0)
+
   const resizedDesign = await sharp(designBuffer)
-    .resize(printArea.width, printArea.height, { fit: "cover" })
+    .resize(pWidth, pHeight, { fit: "cover" })
     .png()
     .toBuffer()
 
-  const printRx = printArea.borderRadius || 0
-  let maskSvg = `<svg width="${printArea.width}" height="${printArea.height}">
+  let maskSvg = `<svg width="${pWidth}" height="${pHeight}">
     <mask id="cutout">
-      <rect width="${printArea.width}" height="${printArea.height}" fill="white" rx="${printRx}" />`
+      <rect width="${pWidth}" height="${pHeight}" fill="white" rx="${printRx}" />`
 
   if (cameraArea && cameraArea.width > 0 && cameraArea.height > 0) {
-    const camX = cameraArea.x - printArea.x
-    const camY = cameraArea.y - printArea.y
-    const camRx = cameraArea.borderRadius || 0
-    maskSvg += `<rect x="${camX}" y="${camY}" width="${cameraArea.width}" height="${cameraArea.height}" fill="black" rx="${camRx}" />`
+    const camX = Math.round(cameraArea.x) - pX
+    const camY = Math.round(cameraArea.y) - pY
+    const camWidth = Math.round(cameraArea.width)
+    const camHeight = Math.round(cameraArea.height)
+    const camRx = Math.round(cameraArea.borderRadius || 0)
+    maskSvg += `<rect x="${camX}" y="${camY}" width="${camWidth}" height="${camHeight}" fill="black" rx="${camRx}" />`
   }
   
-  maskSvg += `</mask><rect width="${printArea.width}" height="${printArea.height}" fill="white" mask="url(#cutout)" /></svg>`
+  maskSvg += `</mask><rect width="${pWidth}" height="${pHeight}" fill="white" mask="url(#cutout)" /></svg>`
 
   const maskedDesign = await sharp(resizedDesign)
     .composite([{ input: Buffer.from(maskSvg), blend: 'dest-in' }])
     .png()
     .toBuffer()
 
-  let finalBase = sharp(templateBuffer).composite([{ input: maskedDesign, top: printArea.y, left: printArea.x, blend: blendMode as any }])
+  let finalBase = sharp(templateBuffer).composite([{ input: maskedDesign, top: pY, left: pX, blend: blendMode as any }])
   let mockupBuffer = await finalBase.jpeg({ quality: 85 }).toBuffer()
 
   // Apply Overlay Mask for 3D Effect if provided
@@ -185,7 +199,11 @@ export const mockupWorker = new Worker(
 mockupWorker.on("failed", async (job: any, err: Error) => {
   console.error(`Mockup job failed [design=${job?.data?.designId} model=${job?.data?.phoneModelId}]:`, err.message)
   if (job?.data?.designId) {
-    await Design.findByIdAndUpdate(job.data.designId, { $inc: { failedCount: 1 } })
+    const design = await Design.findByIdAndUpdate(job.data.designId, { $inc: { failedCount: 1 } }, { new: true })
+    if (design && design.generatedCount + design.failedCount >= design.totalModels) {
+      design.status = design.failedCount === design.totalModels ? "partial_failure" : "partial_failure" // Or "failed" if you prefer
+      await design.save()
+    }
   }
 })
 
