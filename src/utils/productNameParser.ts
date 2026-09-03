@@ -115,31 +115,38 @@ export function parseProductName(rawName: string): ParsedProduct {
   }
   name = name.trim()
 
-  // 2. Detect & remove caseType phrase
+  // 2. Detect caseType phrase
   let caseType: CaseType = "other"
   for (const { pattern, type } of CASE_TYPE_PATTERNS) {
     if (pattern.test(name)) {
       caseType = type
-      name = name.replace(pattern, "").trim()
       break
     }
   }
 
-  // 3. Remove noise phrases
+  // 3. Remove ALL case type phrases (globally / repeatedly)
+  name = name.replace(/\b(dual|metal|glass|hard|soft|wallet)[\s-]*(case|cover|protection)\b/gi, "")
+  name = name.replace(/\b(double[\s-]*layer|tempered[\s-]*glass)\b/gi, "")
+
+  // 4. Strip device model suffixes (e.g. "- iphone-15", "- Apple iPhone 15", "for Samsung S24", etc.)
+  name = name.replace(/\s*[-–—:]\s*(apple\s*)?(iphone|samsung|galaxy|vivo|oppo|xiaomi|redmi|oneplus)[\w\s-]*$/i, "")
+  name = name.replace(/\bfor\s+(iphone|samsung|oneplus|xiaomi|redmi|poco|vivo|oppo|realme|google|motorola|moto|nokia|huawei|asus|lg|sony)\b.*/i, "")
+
+  // 5. Remove noise phrases
   for (const noise of NOISE_PHRASES) {
     name = name.replace(noise, "").trim()
   }
 
-  // 4. Clean up trailing/leading punctuation & dashes
+  // 6. Clean up trailing/leading punctuation & dashes
   name = name.replace(/[-–—,.\s]+$/, "").replace(/^[-–—,.\s]+/, "").trim()
 
-  // 5. Collapse multiple spaces
-  name = name.replace(/\s{2,}/g, " ")
+  // 7. Collapse multiple spaces
+  name = name.replace(/[-–—\s]+/g, " ").trim()
 
   const isMobileCase = ["dual-case", "metal-case", "glass-case", "hard-case", "soft-case", "wallet-case"].includes(caseType)
 
   return {
-    designName: name || rawName,          // fallback to raw if nothing left
+    designName: name || rawName,
     designSlug: slugify(name || rawName),
     caseType,
     isMobileCase,

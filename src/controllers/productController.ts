@@ -376,10 +376,23 @@ export const getDesignVariants = asyncHandler(async (req: Request, res: Response
   const { designSlug } = req.params
   const { deviceModel } = req.query  // optional ObjectId
 
-  // Find all products sharing this designSlug
+  // Compute clean base design slug: e.g. "bori-dual-case" -> "bori"
+  const cleanBase = designSlug
+    .toLowerCase()
+    .replace(/-(dual|metal|glass|hard|soft|wallet)-case.*$/i, "")
+    .replace(/-(iphone|samsung|galaxy|vivo|oppo|xiaomi)[\w-]*$/i, "")
+    .replace(/-+$/, "")
+    .trim()
+
+  // Find all products matching this design or clean base
   const variants = await Product.find({
-    designSlug,
-    $or: [{ status: "active" }, { status: { $exists: false } }],
+    $or: [
+      { designSlug: designSlug },
+      { designSlug: cleanBase },
+      { designSlug: new RegExp(`^${cleanBase}(-|$)`, "i") },
+      { name: new RegExp(`^${cleanBase}\\b`, "i"), caseType: { $in: Array.from(MOBILE_CASE_TYPES) } },
+    ],
+    isActive: true,
   })
     .populate("images", "url")
     .select("name slug caseType price comparePrice images stock deviceModels designSlug")
@@ -397,7 +410,13 @@ export const getDesignVariants = asyncHandler(async (req: Request, res: Response
 
   variants.forEach((v: any) => {
     if (!MOBILE_CASE_TYPES.has(v.caseType)) return
-    if (!groupedVariants.has(v.caseType)) {
+
+    // If deviceModel is specified, prefer the variant that matches the deviceModel
+    const matchesDevice = deviceModel
+      ? v.deviceModels?.some((m: any) => (m._id || m).toString() === deviceModel.toString())
+      : true
+
+    if (!groupedVariants.has(v.caseType) || matchesDevice) {
       groupedVariants.set(v.caseType, { ...v, available: true })
     }
   })
