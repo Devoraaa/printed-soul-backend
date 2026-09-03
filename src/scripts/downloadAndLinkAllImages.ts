@@ -202,8 +202,7 @@ async function run() {
 
     // If it's a phone case
     if (prod.caseType && prod.caseType !== "other" && prod.designSlug && designImageIds[prod.designSlug]?.length > 0) {
-      prod.images = designImageIds[prod.designSlug]
-      await prod.save()
+      await Product.updateOne({ _id: prod._id }, { $set: { images: designImageIds[prod.designSlug] } })
       updatedCount++
       continue
     }
@@ -242,8 +241,7 @@ async function run() {
       }
 
       if (imgIds.length > 0) {
-        prod.images = imgIds
-        await prod.save()
+        await Product.updateOne({ _id: prod._id }, { $set: { images: imgIds } })
         updatedCount++
       }
     }
