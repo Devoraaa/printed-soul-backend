@@ -32,6 +32,17 @@ function slugify(text: string): string {
     .replace(/(^-|-$)/g, "")
 }
 
+/** Helper: ensure unique product slug */
+async function getUniqueSlug(base: string): Promise<string> {
+  const baseClean = slugify(base)
+  let candidate = baseClean
+  let counter = 1
+  while (await Product.findOne({ slug: candidate })) {
+    candidate = `${baseClean}-${counter++}`
+  }
+  return candidate
+}
+
 /** Helper: download image from URL and optimize to WebP (Quality 85%) */
 async function processImageUrl(url: string, prefix: string): Promise<mongoose.Types.ObjectId | null> {
   try {
@@ -384,122 +395,134 @@ export async function importAllCsvFiles(csvFiles: string[]) {
           const vData = item.variants.find((v: any) => v.option1.toUpperCase().includes(cfg.optKeyword)) || item.variants[0]
           const price = vData?.price || cfg.defaultPrice
           const comparePrice = vData?.comparePrice || price * 1.5
-          const prodName = `Apple iPhone ${designName} ${cfg.nameSuffix}`
-          const prodSlug = slugify(`apple-iphone-${designSlug}-${cfg.caseType}`)
+          try {
+            const prodName = `Apple iPhone ${designName} ${cfg.nameSuffix}`
+            const prodSlug = await getUniqueSlug(`apple-iphone-${designSlug}-${cfg.caseType}`)
+            const randomSku = Math.random().toString(36).substring(2, 6).toUpperCase()
+
+            await Product.create({
+              name: prodName,
+              slug: prodSlug,
+              description: item.body || `Premium ${cfg.nameSuffix} with precision cutouts, vivid fade-proof print, and ultra-durable protection for Apple iPhone.`,
+              shortDescription: prodName,
+              sku: `PSS-APP-${designSlug.slice(0, 8)}-${cfg.caseType.slice(0, 4)}-${randomSku}`.toUpperCase(),
+              price,
+              comparePrice,
+              category: cfg.catId,
+              brand: appleBrand._id,
+              deviceModels: appleDeviceIds,
+              images: imageIds,
+              stock: 100,
+              isActive: true,
+              isFeatured: importedCount < 12,
+              tags: ["apple", "iphone", cfg.caseType, "phone-case", "mobile-cover", designSlug],
+              caseType: cfg.caseType,
+              designSlug,
+              ratings: { average: 4.8, count: 20 + Math.floor(Math.random() * 25) },
+            })
+            importedCount++
+            console.log(`[Case]: ${prodName} (₹${price}, ${imageIds.length} imgs)`)
+          } catch (err: any) {
+            console.warn(`Error creating case ${designName}:`, err.message)
+          }
+        }
+      } else {
+        // Double Layer / Dual Case
+        try {
+          const vData = item.variants[0]
+          const price = vData?.price || 799
+          const comparePrice = vData?.comparePrice || 1299
+          const prodName = `Apple iPhone ${designName} Dual Case`
+          const prodSlug = await getUniqueSlug(`apple-iphone-${designSlug}-dual-case`)
           const randomSku = Math.random().toString(36).substring(2, 6).toUpperCase()
 
           await Product.create({
             name: prodName,
             slug: prodSlug,
-            description: item.body || `Premium ${cfg.nameSuffix} with precision cutouts, vivid fade-proof print, and ultra-durable protection for Apple iPhone.`,
+            description: item.body || `Premium Dual Protection Double Layer Case with shock-absorbing inner TPU and high-gloss scratch-resistant polycarbonate shell for Apple iPhone.`,
             shortDescription: prodName,
-            sku: `PSS-APP-${designSlug.slice(0, 8)}-${cfg.caseType.slice(0, 4)}-${randomSku}`.toUpperCase(),
+            sku: `PSS-APP-${designSlug.slice(0, 10)}-${randomSku}`.toUpperCase(),
             price,
             comparePrice,
-            category: cfg.catId,
+            category: catMap["dual-case"],
             brand: appleBrand._id,
             deviceModels: appleDeviceIds,
             images: imageIds,
             stock: 100,
             isActive: true,
             isFeatured: importedCount < 12,
-            tags: ["apple", "iphone", cfg.caseType, "phone-case", "mobile-cover", designSlug],
-            caseType: cfg.caseType,
+            tags: ["apple", "iphone", "dual-case", "phone-case", "mobile-cover", designSlug],
+            caseType: "dual-case",
             designSlug,
-            ratings: { average: 4.8, count: 20 + Math.floor(Math.random() * 25) },
+            ratings: { average: 4.9, count: 25 + Math.floor(Math.random() * 30) },
           })
           importedCount++
           console.log(`[Case]: ${prodName} (₹${price}, ${imageIds.length} imgs)`)
+        } catch (err: any) {
+          console.warn(`Error creating dual case ${designName}:`, err.message)
         }
-      } else {
-        // Double Layer / Dual Case
+      }
+    } else {
+      // Lifestyle Products (Mugs, Tumblers, Mousepads, Tote Bags, Frames, Coasters)
+      try {
+        let catId = catMap["covers"]
+        let caseType: any = "other"
+        let name = cleanTitle
+
+        if (isMug) {
+          catId = catMap["mugs"]
+          caseType = "mug"
+          if (!name.toLowerCase().includes("mug") && !name.toLowerCase().includes("cup")) name += " Ceramic Mug"
+        } else if (isTumbler) {
+          catId = catMap["tumblers"]
+          caseType = "tumbler"
+        } else if (isMousepad) {
+          catId = catMap["mousepads"]
+          caseType = "other"
+          if (!name.toLowerCase().includes("mousepad") && !name.toLowerCase().includes("pad")) name += " Pro Mousepad"
+        } else if (isToteBag) {
+          catId = catMap["tote-bags"]
+          caseType = "other"
+        } else if (isFrame) {
+          catId = catMap["frames"]
+          caseType = "frame"
+          if (!name.toLowerCase().includes("frame") && !name.toLowerCase().includes("artwork")) name += " Frame"
+        } else if (isCoaster) {
+          catId = catMap["coasters"]
+          caseType = "other"
+        }
+
         const vData = item.variants[0]
-        const price = vData?.price || 799
-        const comparePrice = vData?.comparePrice || 1299
-        const prodName = `Apple iPhone ${designName} Dual Case`
-        const prodSlug = slugify(`apple-iphone-${designSlug}-dual-case`)
+        const price = vData?.price || 399
+        const comparePrice = vData?.comparePrice || price * 1.5
+        const prodSlug = await getUniqueSlug(name)
         const randomSku = Math.random().toString(36).substring(2, 6).toUpperCase()
 
         await Product.create({
-          name: prodName,
+          name,
           slug: prodSlug,
-          description: item.body || `Premium Dual Protection Double Layer Case with shock-absorbing inner TPU and high-gloss scratch-resistant polycarbonate shell for Apple iPhone.`,
-          shortDescription: prodName,
-          sku: `PSS-APP-${designSlug.slice(0, 10)}-${randomSku}`.toUpperCase(),
+          description: item.body || `Premium handcrafted ${name} created with authentic high-definition print and durable luxury finish.`,
+          shortDescription: name,
+          sku: `PSS-${prodSlug.slice(0, 10)}-${randomSku}`.toUpperCase(),
           price,
           comparePrice,
-          category: catMap["dual-case"],
-          brand: appleBrand._id,
-          deviceModels: appleDeviceIds,
+          category: catId,
+          brand: printedSoulBrand._id,
+          deviceModels: [],
           images: imageIds,
           stock: 100,
           isActive: true,
           isFeatured: importedCount < 12,
-          tags: ["apple", "iphone", "dual-case", "phone-case", "mobile-cover", designSlug],
-          caseType: "dual-case",
-          designSlug,
-          ratings: { average: 4.9, count: 25 + Math.floor(Math.random() * 30) },
+          tags: ["printed-soul", caseType],
+          caseType,
+          designSlug: prodSlug,
+          ratings: { average: 4.8, count: 18 + Math.floor(Math.random() * 20) },
         })
         importedCount++
-        console.log(`[Case]: ${prodName} (₹${price}, ${imageIds.length} imgs)`)
+        console.log(`[Lifestyle]: ${name} (₹${price}, ${imageIds.length} imgs)`)
+      } catch (err: any) {
+        console.warn(`Error creating lifestyle product ${cleanTitle}:`, err.message)
       }
-    } else {
-      // Lifestyle Products (Mugs, Tumblers, Mousepads, Tote Bags, Frames, Coasters)
-      let catId = catMap["covers"]
-      let caseType: any = "other"
-      let name = cleanTitle
-
-      if (isMug) {
-        catId = catMap["mugs"]
-        caseType = "mug"
-        if (!name.toLowerCase().includes("mug") && !name.toLowerCase().includes("cup")) name += " Ceramic Mug"
-      } else if (isTumbler) {
-        catId = catMap["tumblers"]
-        caseType = "tumbler"
-      } else if (isMousepad) {
-        catId = catMap["mousepads"]
-        caseType = "other"
-        if (!name.toLowerCase().includes("mousepad") && !name.toLowerCase().includes("pad")) name += " Pro Mousepad"
-      } else if (isToteBag) {
-        catId = catMap["tote-bags"]
-        caseType = "other"
-      } else if (isFrame) {
-        catId = catMap["frames"]
-        caseType = "frame"
-        if (!name.toLowerCase().includes("frame") && !name.toLowerCase().includes("artwork")) name += " Frame"
-      } else if (isCoaster) {
-        catId = catMap["coasters"]
-        caseType = "other"
-      }
-
-      const vData = item.variants[0]
-      const price = vData?.price || 399
-      const comparePrice = vData?.comparePrice || price * 1.5
-      const prodSlug = slugify(name)
-      const randomSku = Math.random().toString(36).substring(2, 6).toUpperCase()
-
-      await Product.create({
-        name,
-        slug: prodSlug,
-        description: item.body || `Premium handcrafted ${name} created with authentic high-definition print and durable luxury finish.`,
-        shortDescription: name,
-        sku: `PSS-${prodSlug.slice(0, 10)}-${randomSku}`.toUpperCase(),
-        price,
-        comparePrice,
-        category: catId,
-        brand: printedSoulBrand._id,
-        deviceModels: [],
-        images: imageIds,
-        stock: 100,
-        isActive: true,
-        isFeatured: importedCount < 12,
-        tags: ["printed-soul", caseType],
-        caseType,
-        designSlug: prodSlug,
-        ratings: { average: 4.8, count: 18 + Math.floor(Math.random() * 20) },
-      })
-      importedCount++
-      console.log(`[Lifestyle]: ${name} (₹${price}, ${imageIds.length} imgs)`)
     }
   }
 
