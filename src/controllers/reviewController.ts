@@ -14,20 +14,21 @@ export const getProductReviews = asyncHandler(async (req: Request, res: Response
 })
 
 export const createReview = asyncHandler(async (req: any, res: Response, next: NextFunction) => {
-  const { productId, rating, title, comment } = req.body
+  const { productId, product, rating, title, comment } = req.body
+  const targetProduct = productId || product
 
   // Check if user has purchased this product
   const hasPurchased = await Order.findOne({
     user: req.user.id,
-    "items.product": productId,
+    "items.product": targetProduct,
     status: "delivered",
   })
   if (!hasPurchased) return next(new ApiError(403, "You can only review products you have purchased"))
 
-  const existing = await Review.findOne({ product: productId, user: req.user.id })
+  const existing = await Review.findOne({ product: targetProduct, user: req.user.id })
   if (existing) return next(new ApiError(400, "You have already reviewed this product"))
 
-  const review = await Review.create({ product: productId, user: req.user.id, rating, title, comment })
+  const review = await Review.create({ product: targetProduct, user: req.user.id, rating, title, comment })
   res.status(201).json(ApiResponse.success(review, "Review submitted — pending approval"))
 })
 
