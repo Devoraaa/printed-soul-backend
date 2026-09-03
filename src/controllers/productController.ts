@@ -393,32 +393,20 @@ export const getDesignVariants = asyncHandler(async (req: Request, res: Response
     return res.json(ApiResponse.success({ showSwitcher: false, variants: [] }, "No case switcher for this product type"))
   }
 
-  // Mark each caseType: is it available for the requested device model?
-  // Since we have separate products per model, we group by caseType.
   const groupedVariants = new Map<string, any>()
 
   variants.forEach((v: any) => {
     if (!MOBILE_CASE_TYPES.has(v.caseType)) return
-    
-    const isModelMatch = deviceModel 
-      ? v.deviceModels?.some((dm: any) => dm.toString() === deviceModel.toString())
-      : true
-
-    // If we haven't seen this caseType, or if the current variant is a match (and the stored one isn't)
-    if (!groupedVariants.has(v.caseType) || isModelMatch) {
-      groupedVariants.set(v.caseType, { ...v, available: !!isModelMatch })
+    if (!groupedVariants.has(v.caseType)) {
+      groupedVariants.set(v.caseType, { ...v, available: true })
     }
   })
 
   const result = Array.from(groupedVariants.values())
 
-  // Sort: available first, then fixed order: dual → glass → metal → hard → soft → wallet
+  // Sort: fixed order: dual → glass → metal → hard → soft → wallet
   const ORDER: Record<string, number> = { "dual-case": 0, "glass-case": 1, "metal-case": 2, "hard-case": 3, "soft-case": 4, "wallet-case": 5 }
-  result.sort((a: any, b: any) => {
-    if (a.available && !b.available) return -1
-    if (!a.available && b.available) return 1
-    return (ORDER[a.caseType] ?? 99) - (ORDER[b.caseType] ?? 99)
-  })
+  result.sort((a: any, b: any) => (ORDER[a.caseType] ?? 99) - (ORDER[b.caseType] ?? 99))
 
   res.json(ApiResponse.success({ showSwitcher: true, variants: result }, "Design variants retrieved"))
 })

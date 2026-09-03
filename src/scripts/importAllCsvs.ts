@@ -259,12 +259,30 @@ export async function importAllCsvFiles(csvFiles: string[]) {
           category: r["Product Category"] || "",
           variants: [],
           images: [],
+          variantImages: {
+            metal: [] as string[],
+            glass: [] as string[],
+            dual: [] as string[],
+          },
         }
       }
 
       if (r.Title && !mergedProducts[h].title) mergedProducts[h].title = r.Title
       if (r["Body (HTML)"] && !mergedProducts[h].body) mergedProducts[h].body = r["Body (HTML)"]
       if (r["Product Category"] && !mergedProducts[h].category) mergedProducts[h].category = r["Product Category"]
+
+      const optVal = (r["Option1 Value"] || "").trim().toUpperCase()
+      const rowImg = r["Variant Image"] || r["Image Src"]
+
+      if (rowImg) {
+        if (optVal.includes("METAL") && !mergedProducts[h].variantImages.metal.includes(rowImg)) {
+          mergedProducts[h].variantImages.metal.push(rowImg)
+        } else if (optVal.includes("GLASS") && !mergedProducts[h].variantImages.glass.includes(rowImg)) {
+          mergedProducts[h].variantImages.glass.push(rowImg)
+        } else if ((optVal.includes("DOUBLE") || optVal.includes("DUAL") || optVal.includes("3D")) && !mergedProducts[h].variantImages.dual.includes(rowImg)) {
+          mergedProducts[h].variantImages.dual.push(rowImg)
+        }
+      }
 
       if (r["Option1 Value"] || r["Variant Price"]) {
         const opt = (r["Option1 Value"] || "").trim()
@@ -373,6 +391,7 @@ export async function importAllCsvFiles(csvFiles: string[]) {
             nameSuffix: "Dual Case",
             catId: catMap["dual-case"],
             optKeyword: "DOUBLE",
+            varKey: "dual" as const,
             defaultPrice: 599,
           },
           {
@@ -380,6 +399,7 @@ export async function importAllCsvFiles(csvFiles: string[]) {
             nameSuffix: "Glass Case",
             catId: catMap["glass-case"],
             optKeyword: "GLASS",
+            varKey: "glass" as const,
             defaultPrice: 499,
           },
           {
@@ -387,6 +407,7 @@ export async function importAllCsvFiles(csvFiles: string[]) {
             nameSuffix: "Metal Case",
             catId: catMap["metal-case"],
             optKeyword: "METAL",
+            varKey: "metal" as const,
             defaultPrice: 399,
           },
         ]
@@ -396,32 +417,41 @@ export async function importAllCsvFiles(csvFiles: string[]) {
           const price = vData?.price || cfg.defaultPrice
           const comparePrice = vData?.comparePrice || price * 1.5
           try {
-            const prodName = `Apple iPhone ${designName} ${cfg.nameSuffix}`
-            const prodSlug = await getUniqueSlug(`apple-iphone-${designSlug}-${cfg.caseType}`)
+            const prodName = `${designName} ${cfg.nameSuffix}`
+            const prodSlug = await getUniqueSlug(`${designSlug}-${cfg.caseType}`)
             const randomSku = Math.random().toString(36).substring(2, 6).toUpperCase()
+
+            // Find variant-specific images if available
+            const specificUrls = item.variantImages?.[cfg.varKey] || []
+            const variantImageIds: mongoose.Types.ObjectId[] = []
+            for (const url of specificUrls) {
+              const imgId = await processImageUrl(url, slugify(`${designSlug}-${cfg.caseType}`).slice(0, 22))
+              if (imgId) variantImageIds.push(imgId)
+            }
+            const finalImageIds = variantImageIds.length > 0 ? variantImageIds : imageIds
 
             await Product.create({
               name: prodName,
               slug: prodSlug,
-              description: item.body || `Premium ${cfg.nameSuffix} with precision cutouts, vivid fade-proof print, and ultra-durable protection for Apple iPhone.`,
+              description: item.body || `Premium ${cfg.nameSuffix} with precision cutouts, vivid fade-proof print, and ultra-durable protection.`,
               shortDescription: prodName,
-              sku: `PSS-APP-${designSlug.slice(0, 8)}-${cfg.caseType.slice(0, 4)}-${randomSku}`.toUpperCase(),
+              sku: `PSS-${designSlug.slice(0, 8)}-${cfg.caseType.slice(0, 4)}-${randomSku}`.toUpperCase(),
               price,
               comparePrice,
               category: cfg.catId,
               brand: appleBrand._id,
               deviceModels: appleDeviceIds,
-              images: imageIds,
+              images: finalImageIds,
               stock: 100,
               isActive: true,
               isFeatured: importedCount < 12,
-              tags: ["apple", "iphone", cfg.caseType, "phone-case", "mobile-cover", designSlug],
+              tags: [cfg.caseType, "phone-case", "mobile-cover", designSlug],
               caseType: cfg.caseType,
               designSlug,
               ratings: { average: 4.8, count: 20 + Math.floor(Math.random() * 25) },
             })
             importedCount++
-            console.log(`[Case]: ${prodName} (₹${price}, ${imageIds.length} imgs)`)
+            console.log(`[Case]: ${prodName} (₹${price}, ${finalImageIds.length} imgs)`)
           } catch (err: any) {
             console.warn(`Error creating case ${designName}:`, err.message)
           }
@@ -432,16 +462,16 @@ export async function importAllCsvFiles(csvFiles: string[]) {
           const vData = item.variants[0]
           const price = vData?.price || 799
           const comparePrice = vData?.comparePrice || 1299
-          const prodName = `Apple iPhone ${designName} Dual Case`
-          const prodSlug = await getUniqueSlug(`apple-iphone-${designSlug}-dual-case`)
+          const prodName = `${designName} Dual Case`
+          const prodSlug = await getUniqueSlug(`${designSlug}-dual-case`)
           const randomSku = Math.random().toString(36).substring(2, 6).toUpperCase()
 
           await Product.create({
             name: prodName,
             slug: prodSlug,
-            description: item.body || `Premium Dual Protection Double Layer Case with shock-absorbing inner TPU and high-gloss scratch-resistant polycarbonate shell for Apple iPhone.`,
+            description: item.body || `Premium Dual Protection Double Layer Case with shock-absorbing inner TPU and high-gloss scratch-resistant polycarbonate shell.`,
             shortDescription: prodName,
-            sku: `PSS-APP-${designSlug.slice(0, 10)}-${randomSku}`.toUpperCase(),
+            sku: `PSS-${designSlug.slice(0, 10)}-${randomSku}`.toUpperCase(),
             price,
             comparePrice,
             category: catMap["dual-case"],
@@ -451,7 +481,7 @@ export async function importAllCsvFiles(csvFiles: string[]) {
             stock: 100,
             isActive: true,
             isFeatured: importedCount < 12,
-            tags: ["apple", "iphone", "dual-case", "phone-case", "mobile-cover", designSlug],
+            tags: ["dual-case", "phone-case", "mobile-cover", designSlug],
             caseType: "dual-case",
             designSlug,
             ratings: { average: 4.9, count: 25 + Math.floor(Math.random() * 30) },
