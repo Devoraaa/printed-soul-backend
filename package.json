@@ -14,7 +14,8 @@
     "generate:cases": "ts-node src/scripts/generateDeviceCases.ts",
     "import:clean": "ts-node src/scripts/cleanExcelCatalogImport.ts",
     "import:all": "ts-node src/scripts/importAllCsvs.ts",
-    "restore:cases": "ts-node src/scripts/restoreStartingCases.ts"
+    "restore:cases": "ts-node src/scripts/restoreStartingCases.ts",
+    "link:images": "ts-node src/scripts/downloadAndLinkAllImages.ts"
   },
   "dependencies": {
     "@types/prompt-sync": "^4.2.3",
