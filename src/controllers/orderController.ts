@@ -10,7 +10,9 @@ import { emailService } from "../services/emailService"
 import { OrderStatus } from "../models/Order"
 import { payuService } from "../services/payuService"
 import { delhiveryService } from "../services/delhiveryService"
+import { streamInvoicePdf } from "../services/invoiceService"
 import { User } from "../models/User"
+import mongoose from "mongoose"
 
 // Customer & Guest: Create Order (Prepaid via PayU only)
 export const createOrder = asyncHandler(async (req: any, res: Response, next: NextFunction) => {
@@ -117,15 +119,18 @@ export const createOrder = asyncHandler(async (req: any, res: Response, next: Ne
     })
   }
 
-  if (cartDoc) {
+  if (userId) {
+    await Cart.findOneAndUpdate({ user: userId }, { $set: { items: [], totalAmount: 0 } }).catch(() => {})
+  } else if (cartDoc) {
     cartDoc.items = []
     await cartDoc.save()
   }
 
   const apiOrigin = process.env.API_URL || "http://localhost:5000"
+  const uniqueTxnId = `${order.orderNumber}_${Date.now()}`
   
   const payuParams = {
-    txnid: order.orderNumber,
+    txnid: uniqueTxnId,
     amount: totalAmount,
     productinfo: `Printed Soul Order #${order.orderNumber}`,
     firstname: finalAddress.fullName.split(" ")[0],
@@ -136,7 +141,7 @@ export const createOrder = asyncHandler(async (req: any, res: Response, next: Ne
   }
 
   const payuData = payuService.generatePaymentHash(payuParams)
-  order.payuTxnId = order.orderNumber
+  order.payuTxnId = uniqueTxnId
   await order.save()
 
   res.status(201).json(
@@ -168,7 +173,14 @@ export const handlePayuCallback = asyncHandler(async (req: Request, res: Respons
   const isValidHash = payuService.verifyResponseHash(payload)
 
   const { status, txnid, mihpayid } = payload
-  const order = await Order.findOne({ orderNumber: txnid }).populate("user", "name email")
+  const orderNumber = txnid ? txnid.split("_")[0] : txnid
+  const order = await Order.findOne({
+    $or: [
+      { payuTxnId: txnid },
+      { orderNumber: txnid },
+      { orderNumber: orderNumber },
+    ],
+  }).populate("user", "name email")
 
   const clientOrigin = process.env.CLIENT_URL || "http://localhost:5173"
 
@@ -186,6 +198,10 @@ export const handlePayuCallback = asyncHandler(async (req: Request, res: Respons
       timestamp: new Date(),
       note: `Payment received via PayU (MihPayID: ${mihpayid || "N/A"})`,
     })
+
+    if (order.user) {
+      await Cart.findOneAndUpdate({ user: order.user }, { $set: { items: [], totalAmount: 0 } }).catch(() => {})
+    }
 
     // ── AUTO-PUSH TO DELHIVERY ONE ──────────────────────────────────────
     try {
@@ -264,9 +280,17 @@ export const cancelOrder = asyncHandler(async (req: any, res: Response, next: Ne
     return next(new ApiError(400, `Order cannot be cancelled at '${order.status}' stage`))
   }
 
+  const { reason, category, feedback } = req.body
+  let fullReason = reason || "Cancelled by customer"
+  if (category && category !== reason) {
+    fullReason = `[${category}] ${reason}${feedback ? ` — Note: ${feedback}` : ""}`
+  } else if (feedback) {
+    fullReason = `${fullReason} — Note: ${feedback}`
+  }
+
   order.status = "cancelled"
-  order.cancelReason = req.body.reason || "Cancelled by customer"
-  order.statusHistory.push({ status: "cancelled", timestamp: new Date(), note: order.cancelReason })
+  order.cancelReason = fullReason
+  order.statusHistory.push({ status: "cancelled", timestamp: new Date(), note: fullReason })
 
   // Restore stock
   for (const item of order.items) {
@@ -281,7 +305,7 @@ export const cancelOrder = asyncHandler(async (req: any, res: Response, next: Ne
         order.statusHistory.push({
           status: "cancelled",
           timestamp: new Date(),
-          note: `Delhivery shipment (AWB: ${order.trackingNumber}) cancelled successfully`,
+          note: `Delhivery shipment (AWB: ${order.trackingNumber}) cancelled successfully: ${cancelResult.message}`,
         })
       } else {
         order.statusHistory.push({
@@ -299,16 +323,39 @@ export const cancelOrder = asyncHandler(async (req: any, res: Response, next: Ne
   res.json(ApiResponse.success(order, "Order cancelled"))
 })
 
-// ── Admin: All Orders ──────────────────────────────────────────────────────
+// ── Admin: All Orders (Single Source of Truth + Search & Filter) ─────────────
 export const adminGetOrders = asyncHandler(async (req: Request, res: Response) => {
-  const { status, page = 1, limit = 20 } = req.query
+  const { status, paymentStatus, search, page = 1, limit = 20 } = req.query
   const filter: any = {}
   if (status) filter.status = status
+  if (paymentStatus) filter.paymentStatus = paymentStatus
+
+  if (search && typeof search === "string" && search.trim()) {
+    const q = search.trim()
+    const regex = new RegExp(q, "i")
+
+    // Find users by name/email/phone
+    const matchedUsers = await User.find({
+      $or: [{ name: regex }, { email: regex }, { phone: regex }],
+    }).select("_id")
+    const matchedUserIds = matchedUsers.map((u) => u._id)
+
+    filter.$or = [
+      { orderNumber: regex },
+      { trackingNumber: regex },
+      { payuTxnId: regex },
+      { payuMihpayId: regex },
+      { "shippingAddress.fullName": regex },
+      { "shippingAddress.phone": regex },
+      { user: { $in: matchedUserIds } },
+    ]
+  }
 
   const skip = (parseInt(page as string) - 1) * parseInt(limit as string)
   const [orders, total] = await Promise.all([
     Order.find(filter)
       .populate("user", "name email phone")
+      .populate("items.product", "name images coverImage")
       .sort("-createdAt")
       .skip(skip)
       .limit(parseInt(limit as string)),
@@ -360,6 +407,29 @@ export const adminUpdateOrderStatus = asyncHandler(async (req: any, res: Respons
   }
 
   res.json(ApiResponse.success(order, `Order status updated to ${status}`))
+})
+
+// ── Admin: Update Payment Status (Process Refunds) ────────────────────────
+export const adminUpdatePaymentStatus = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const { paymentStatus, refundTxnId, note } = req.body
+  const order = await Order.findById(req.params.id).populate("user", "name email")
+  if (!order) return next(new ApiError(404, "Order not found"))
+
+  order.paymentStatus = paymentStatus
+  const noteText = note
+    ? note
+    : refundTxnId
+      ? `Payment marked as ${paymentStatus}. PayU Refund Ref: ${refundTxnId}`
+      : `Payment status updated to ${paymentStatus}`
+
+  order.statusHistory.push({
+    status: order.status,
+    timestamp: new Date(),
+    note: noteText,
+  })
+
+  await order.save()
+  res.json(ApiResponse.success(order, `Payment status updated to ${paymentStatus}`))
 })
 
 // ── Admin: Manual Push to Delhivery (if auto-push failed) ─────────────────
@@ -466,4 +536,25 @@ export const trackOrder = asyncHandler(async (req: Request, res: Response, next:
   if (!order) return next(new ApiError(404, "No order found matching this Order Number or AWB"))
 
   res.json(ApiResponse.success(order, "Order tracking info retrieved"))
+})
+
+// ── Customer & Admin: Stream Invoice PDF (Zero Disk Storage) ──────────────
+export const downloadOrderInvoice = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const query = (req.params.id || "").trim()
+  if (!query) return next(new ApiError(400, "Please provide Order ID or Order Number"))
+
+  const isObjectId = mongoose.isValidObjectId(query)
+  const order = await Order.findOne({
+    $or: [
+      { orderNumber: { $regex: new RegExp(`^${query}$`, "i") } },
+      ...(isObjectId ? [{ _id: query }] : []),
+    ],
+  }).populate("user", "name email phone")
+
+  if (!order) {
+    return next(new ApiError(404, "Order not found for invoice generation"))
+  }
+
+  // Stream directly to HTTP response in-memory (0 bytes written to disk)
+  streamInvoicePdf(order as any, res)
 })

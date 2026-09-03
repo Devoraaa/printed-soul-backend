@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer"
 import { logger } from "../utils/logger"
+import { generateInvoiceBuffer } from "./invoiceService"
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "smtp.gmail.com",
@@ -11,13 +12,14 @@ const transporter = nodemailer.createTransport({
   },
 })
 
-const sendEmail = async (to: string, subject: string, html: string) => {
+const sendEmail = async (to: string, subject: string, html: string, attachments?: any[]) => {
   try {
     await transporter.sendMail({
       from: process.env.SMTP_FROM_EMAIL || "Printed Soul Store <noreply@printedsoul.com>",
       to,
       subject,
       html,
+      attachments,
     })
     logger.info(`Email sent to ${to}: ${subject}`)
   } catch (error: any) {
@@ -74,6 +76,19 @@ export const emailService = {
     await sendEmail(to, "Your Printed Soul Store Login OTP", html)
   },
 
+  async sendEmailChangeOtp(to: string, otp: string) {
+    const html = baseTemplate(`
+      <h2>Verify Your New Email Address ✉️</h2>
+      <p>You requested to update your email address on Printed Soul Store.</p>
+      <p>Please enter the following 6-digit verification code to confirm this email change:</p>
+      <div style="background: #f4f4f5; padding: 16px; border-radius: 12px; text-align: center; margin: 24px 0; border: 1px solid #e4e4e7;">
+        <span style="letter-spacing: 8px; font-size: 36px; color: #111; font-weight: 800; font-family: monospace;">${otp}</span>
+      </div>
+      <p style="color: #666; font-size: 13px;">This code is valid for 10 minutes. If you did not make this request, please ignore this email or secure your account immediately.</p>
+    `)
+    await sendEmail(to, "Verify Your New Email Address - Printed Soul Store", html)
+  },
+
   async sendWelcome(to: string, name: string) {
     const html = baseTemplate(`
       <h2>Welcome, ${name}! 🎉</h2>
@@ -92,6 +107,9 @@ export const emailService = {
         <td style="text-align:right">₹${(item.price * item.quantity).toFixed(2)}</td>
       </tr>`).join("")
 
+    const apiOrigin = process.env.API_URL || "http://localhost:5000"
+    const invoiceUrl = `${apiOrigin}/api/orders/${order.orderNumber}/invoice`
+
     const html = baseTemplate(`
       <h2>Order Confirmed! 🎊</h2>
       <p>Hi ${name}, your order <strong>#${order.orderNumber}</strong> has been placed successfully.</p>
@@ -103,10 +121,29 @@ export const emailService = {
           <tr class="total-row"><td colspan="2">Total</td><td style="text-align:right">₹${order.totalAmount.toFixed(2)}</td></tr>
         </tbody>
       </table>
-      <p><strong>Payment:</strong> ${order.paymentMethod === "cod" ? "Cash on Delivery" : "Online (Razorpay)"}</p>
-      <a href="${process.env.CLIENT_URL}/account/orders/${order._id}" class="btn">Track Order</a>
+      <p><strong>Payment:</strong> ${order.paymentMethod === "cod" ? "Cash on Delivery" : "Online (PayU)"}</p>
+      <p style="font-size: 13px; color: #4b5563; margin-top: 16px;">
+        📄 <strong>Tax Invoice:</strong> Your official tax invoice is attached as a PDF to this email. You can also download it anytime from the link below.
+      </p>
+      <div style="margin: 20px 0;">
+        <a href="${process.env.CLIENT_URL}/account/orders/${order.orderNumber || order._id}" class="btn">Track Order</a>
+        <a href="${invoiceUrl}" class="btn" style="background: #111827; margin-left: 8px;">Download Invoice (PDF)</a>
+      </div>
     `)
-    await sendEmail(to, `Order Confirmed — #${order.orderNumber}`, html)
+
+    let attachments: any[] = []
+    try {
+      const pdfBuffer = await generateInvoiceBuffer(order)
+      attachments.push({
+        filename: `Invoice-${order.orderNumber}.pdf`,
+        content: pdfBuffer,
+        contentType: "application/pdf",
+      })
+    } catch (pdfErr: any) {
+      logger.error(`Failed to generate invoice PDF attachment: ${pdfErr.message}`)
+    }
+
+    await sendEmail(to, `Order Confirmed — #${order.orderNumber}`, html, attachments)
   },
 
   async sendShippingNotification(to: string, name: string, order: any) {

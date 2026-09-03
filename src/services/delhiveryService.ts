@@ -138,22 +138,28 @@ export const delhiveryService = {
     }
 
     try {
-      // Delhivery cancel endpoint
+      // Delhivery cancel endpoint (Official JSON format)
       const res = await axios.post(
         `${BASE_URL}/api/p/edit`,
-        `format=json&data=${encodeURIComponent(JSON.stringify({
+        {
           waybill: awbCode,
-          cancellation: true,
-        }))}`,
+          cancellation: "true",
+        },
         {
           headers: {
             "Authorization": `Token ${TOKEN}`,
-            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "PrintedSoulStore/1.0",
           },
         }
       )
       console.log("Delhivery cancelShipment response:", JSON.stringify(res.data))
-      return { success: true, message: `Shipment ${awbCode} cancellation requested` }
+      const isSuccess = res.data?.status === true || res.data?.remark?.toLowerCase().includes("cancelled")
+      return { 
+        success: isSuccess, 
+        message: res.data?.remark || `Shipment ${awbCode} cancellation processed` 
+      }
     } catch (err: any) {
       const errDetail = err.response?.data || err.message
       console.error("Delhivery cancelShipment error:", errDetail)

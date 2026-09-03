@@ -5,7 +5,7 @@ import {
   generateManualMockup, getDesignVariants, parseProductNameAPI
 } from "../controllers/productController"
 import { protect, authorize } from "../middlewares/authMiddleware"
-import { upload } from "../utils/upload"
+import { upload, optimizeImages } from "../utils/upload"
 
 const router = Router()
 
@@ -24,10 +24,10 @@ router.get("/:slug", getProductBySlug)
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 router.get("/admin/all", protect, authorize("admin", "superadmin"), adminGetProducts)
-router.post("/", protect, authorize("admin", "superadmin"), upload.array("images", 10), createProduct)
-router.put("/:id", protect, authorize("admin", "superadmin"), upload.array("images", 10), updateProduct)
+router.post("/", protect, authorize("admin", "superadmin"), upload.array("images", 10), optimizeImages, createProduct)
+router.put("/:id", protect, authorize("admin", "superadmin"), upload.array("images", 10), optimizeImages, updateProduct)
 router.delete("/:id/images/:imageId", protect, authorize("admin", "superadmin"), removeProductImage)
-router.post("/:id/mockup", protect, authorize("admin", "superadmin"), upload.single("design"), generateManualMockup)
+router.post("/:id/mockup", protect, authorize("admin", "superadmin"), upload.single("design"), optimizeImages, generateManualMockup)
 router.delete("/:id", protect, authorize("admin", "superadmin"), deleteProduct)
 
 export default router

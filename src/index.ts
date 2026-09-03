@@ -43,29 +43,33 @@ const port = process.env.PORT || 5000
 // ── Security ──────────────────────────────────────────────────────────────
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }))
 
-app.use(cors({
-  origin: (origin, callback) => {
-      // Allowed origins: local dev + VPS domains from .env
-      const allowed = [
-        "http://localhost:5173",   // frontend dev
-        "http://localhost:5174",   // admin dev
-        "http://localhost:5175",
-        "http://localhost:5176",
-        "http://localhost:5177",
-        "http://localhost:5178",
-        "http://localhost:5179",
-        process.env.CLIENT_URL,    // frontend VPS (e.g. https://printedsoul.com)
-        process.env.ADMIN_URL,     // admin VPS   (e.g. https://admin.printedsoul.com)
-      ].filter(Boolean) as string[]
+app.use(cors((req, callback) => {
+  const allowed = [
+    "http://localhost:5173",   // frontend dev
+    "http://localhost:5174",   // admin dev
+    "http://localhost:5175",
+    "http://localhost:5176",
+    "http://localhost:5177",
+    "http://localhost:5178",
+    "http://localhost:5179",
+    process.env.CLIENT_URL,    // frontend VPS
+    process.env.ADMIN_URL,     // admin VPS
+  ].filter(Boolean) as string[]
 
-    // Allow server-to-server requests (no origin) and whitelisted origins
-    if (!origin || allowed.includes(origin)) {
-      callback(null, true)
-    } else {
-      callback(new Error(`CORS: origin '${origin}' not allowed`))
-    }
-  },
-  credentials: true,
+  const origin = req.headers.origin as string
+
+  // 1. Explicitly allow PayU callback redirect (which sends 'null' origin)
+  if (req.path === "/api/orders/payu/callback") {
+    return callback(null, { origin: true, credentials: true })
+  }
+
+  // 2. Allow whitelisted origins and server-to-server requests
+  if (!origin || allowed.includes(origin)) {
+    return callback(null, { origin: true, credentials: true })
+  }
+
+  // 3. Reject others cleanly (returns 403/CORS block in browser instead of 500 Server Error)
+  return callback(null, { origin: false })
 }))
 
 // General rate limiter

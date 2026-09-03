@@ -1,7 +1,7 @@
 import { Router } from "express"
 import { getBanners, adminGetBanners, createBanner, updateBanner, deleteBanner } from "../controllers/bannerController"
 import { protect, authorize } from "../middlewares/authMiddleware"
-import { upload } from "../utils/upload"
+import { upload, optimizeImages } from "../utils/upload"
 
 const router = Router()
 
@@ -14,10 +14,10 @@ router.use(authorize("admin", "superadmin"))
 
 router.route("/admin")
   .get(adminGetBanners)
-  .post(upload.array("images", 1), createBanner)
+  .post(upload.array("images", 1), optimizeImages, createBanner)
 
 router.route("/admin/:id")
-  .put(upload.array("images", 1), updateBanner)
+  .put(upload.array("images", 1), optimizeImages, updateBanner)
   .delete(deleteBanner)
 
 export default router

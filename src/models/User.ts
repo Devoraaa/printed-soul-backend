@@ -12,6 +12,9 @@ export interface IUser extends Document {
   isVerified: boolean
   otp?: string
   otpExpiry?: Date
+  pendingEmail?: string
+  emailOtp?: string
+  emailOtpExpiry?: Date
   emailVerificationToken?: string
   resetPasswordToken?: string
   resetPasswordExpire?: Date
@@ -37,6 +40,9 @@ const userSchema = new Schema<IUser>(
     isVerified: { type: Boolean, default: false },
     otp: { type: String, select: false },
     otpExpiry: { type: Date, select: false },
+    pendingEmail: { type: String, lowercase: true, select: false },
+    emailOtp: { type: String, select: false },
+    emailOtpExpiry: { type: Date, select: false },
     emailVerificationToken: { type: String, select: false },
     resetPasswordToken: { type: String, select: false },
     resetPasswordExpire: { type: Date, select: false },

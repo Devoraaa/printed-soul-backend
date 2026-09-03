@@ -3,22 +3,22 @@ import { getBrands, getBrandById, createBrand, updateBrand, deleteBrand } from "
 import { getCategories, getCategoryBySlug, createCategory, updateCategory, deleteCategory } from "../controllers/categoryController"
 import { getDeviceModels, getDevicesByBrand, createDeviceModel, updateDeviceModel, deleteDeviceModel } from "../controllers/deviceController"
 import { protect, authorize } from "../middlewares/authMiddleware"
-import { upload } from "../utils/upload"
+import { upload, optimizeImages } from "../utils/upload"
 
 const router = Router()
 
 // Brands
 router.get("/brands", getBrands)
 router.get("/brands/:id", getBrandById)
-router.post("/brands", protect, authorize("admin", "superadmin"), upload.single("logo"), createBrand)
-router.put("/brands/:id", protect, authorize("admin", "superadmin"), upload.single("logo"), updateBrand)
+router.post("/brands", protect, authorize("admin", "superadmin"), upload.single("logo"), optimizeImages, createBrand)
+router.put("/brands/:id", protect, authorize("admin", "superadmin"), upload.single("logo"), optimizeImages, updateBrand)
 router.delete("/brands/:id", protect, authorize("admin", "superadmin"), deleteBrand)
 
 // Categories
 router.get("/categories", getCategories)
 router.get("/categories/:slug", getCategoryBySlug)
-router.post("/categories", protect, authorize("admin", "superadmin"), upload.single("image"), createCategory)
-router.put("/categories/:id", protect, authorize("admin", "superadmin"), upload.single("image"), updateCategory)
+router.post("/categories", protect, authorize("admin", "superadmin"), upload.single("image"), optimizeImages, createCategory)
+router.put("/categories/:id", protect, authorize("admin", "superadmin"), upload.single("image"), optimizeImages, updateCategory)
 router.delete("/categories/:id", protect, authorize("admin", "superadmin"), deleteCategory)
 
 // Devices

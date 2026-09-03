@@ -8,7 +8,8 @@
     "dev": "nodemon src/index.ts",
     "build": "tsc",
     "lint": "tsc --noEmit",
-    "seed:live": "ts-node src/scripts/seedLiveProducts.ts"
+    "seed:live": "ts-node src/scripts/seedLiveProducts.ts",
+    "convert:webp": "ts-node src/scripts/convertExistingImagesToWebp.ts"
   },
   "dependencies": {
     "@types/prompt-sync": "^4.2.3",
@@ -26,6 +27,7 @@
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^6.9.14",
+    "pdfkit": "^0.20.2",
     "prompt-sync": "^4.2.0",
     "razorpay": "^2.9.2",
     "sharp": "^0.35.3",
@@ -43,6 +45,7 @@
     "@types/multer": "^1.4.13",
     "@types/node": "^20.14.2",
     "@types/nodemailer": "^6.4.15",
+    "@types/pdfkit": "^0.17.6",
     "@types/uuid": "^10.0.0",
     "nodemon": "^3.1.3",
     "ts-node": "^10.9.2",
