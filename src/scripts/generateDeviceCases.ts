@@ -150,12 +150,15 @@ async function generateDeviceCases() {
           continue
         }
 
+        const randomCode = Math.random().toString(36).substring(2, 6).toUpperCase()
+        const sku = `PSS-${brand.slug.slice(0, 3)}-${dev.slug}-${opt.caseType.slice(0, 4)}-${randomCode}`.toUpperCase()
+
         await Product.create({
           name: prodName,
           slug: prodSlug,
           description: `Premium ${opt.nameSuffix} for ${brandName} ${deviceName} featuring exclusive ${design.name} artwork. Engineered with precision cutouts, shock absorption, and fade-proof print.`,
           shortDescription: prodName,
-          sku: `PSS-${brand.slug.slice(0, 3)}-${dev.slug.slice(0, 6)}-${design.slug.slice(0, 8)}-${opt.caseType.slice(0, 4)}`.toUpperCase(),
+          sku,
           price: opt.price,
           comparePrice: 999,
           category: opt.category,
