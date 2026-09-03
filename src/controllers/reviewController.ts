@@ -17,13 +17,14 @@ export const createReview = asyncHandler(async (req: any, res: Response, next: N
   const { productId, product, rating, title, comment } = req.body
   const targetProduct = productId || product
 
-  // Check if user has purchased this product
+  // Check if user has purchased this product (skip check for admins)
+  const isAdmin = req.user.role === "admin" || req.user.role === "superadmin";
   const hasPurchased = await Order.findOne({
     user: req.user.id,
     "items.product": targetProduct,
     status: "delivered",
   })
-  if (!hasPurchased) return next(new ApiError(403, "You can only review products you have purchased"))
+  if (!hasPurchased && !isAdmin) return next(new ApiError(403, "You can only review products you have purchased"))
 
   const existing = await Review.findOne({ product: targetProduct, user: req.user.id })
   if (existing) return next(new ApiError(400, "You have already reviewed this product"))
