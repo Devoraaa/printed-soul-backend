@@ -363,12 +363,13 @@ export async function runCleanExcelImport(csvFilePath: string) {
           const prodName = `Apple iPhone ${designName} ${cfg.nameSuffix}`
           const prodSlug = slugify(`apple-iphone-${designSlug}-${cfg.caseType}`)
 
+          const randomSku = Math.random().toString(36).substring(2, 6).toUpperCase()
           await Product.create({
             name: prodName,
             slug: prodSlug,
             description: item.body || `Premium ${cfg.nameSuffix} with precision cutouts, vivid fade-proof print, and ultra-durable protection for Apple iPhone.`,
             shortDescription: prodName,
-            sku: `PSS-APP-${designSlug.slice(0, 8)}-${cfg.caseType.slice(0, 4)}`.toUpperCase(),
+            sku: `PSS-APP-${designSlug.slice(0, 8)}-${cfg.caseType.slice(0, 4)}-${randomSku}`.toUpperCase(),
             price,
             comparePrice,
             category: cfg.catId,
@@ -393,13 +394,14 @@ export async function runCleanExcelImport(csvFilePath: string) {
         const comparePrice = vData?.comparePrice || 1299
         const prodName = `Apple iPhone ${designName} Dual Case`
         const prodSlug = slugify(`apple-iphone-${designSlug}-dual-case`)
+        const randomSku = Math.random().toString(36).substring(2, 6).toUpperCase()
 
         await Product.create({
           name: prodName,
           slug: prodSlug,
           description: item.body || `Premium Dual Protection Double Layer Case with shock-absorbing inner TPU and high-gloss scratch-resistant polycarbonate shell for Apple iPhone.`,
           shortDescription: prodName,
-          sku: `PSS-APP-${designSlug.slice(0, 10)}-DUAL`.toUpperCase(),
+          sku: `PSS-APP-${designSlug.slice(0, 10)}-${randomSku}`.toUpperCase(),
           price,
           comparePrice,
           category: catMap["dual-case"],
@@ -450,13 +452,14 @@ export async function runCleanExcelImport(csvFilePath: string) {
       const price = vData?.price || 399
       const comparePrice = vData?.comparePrice || price * 1.5
       const prodSlug = slugify(name)
+      const randomSku = Math.random().toString(36).substring(2, 6).toUpperCase()
 
       await Product.create({
         name,
         slug: prodSlug,
         description: item.body || `Premium handcrafted ${name} created with authentic high-definition print and durable luxury finish.`,
         shortDescription: name,
-        sku: `PSS-${prodSlug.slice(0, 16)}`.toUpperCase(),
+        sku: `PSS-${prodSlug.slice(0, 10)}-${randomSku}`.toUpperCase(),
         price,
         comparePrice,
         category: catId,
