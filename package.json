@@ -10,7 +10,8 @@
     "lint": "tsc --noEmit",
     "seed:live": "ts-node src/scripts/seedLiveProducts.ts",
     "convert:webp": "ts-node src/scripts/convertExistingImagesToWebp.ts",
-    "import:catalog": "ts-node src/scripts/syncAndImportCatalog.ts"
+    "import:catalog": "ts-node src/scripts/syncAndImportCatalog.ts",
+    "generate:cases": "ts-node src/scripts/generateDeviceCases.ts"
   },
   "dependencies": {
     "@types/prompt-sync": "^4.2.3",
