@@ -41,7 +41,7 @@ export const createReview = asyncHandler(async (req: any, res: Response, next: N
     review.title = title
     review.comment = comment
     review.isVerifiedPurchase = !!hasPurchased
-    review.isApproved = isAdmin ? true : false
+    review.isApproved = true
     await review.save()
   } else {
     review = await Review.create({
@@ -51,19 +51,15 @@ export const createReview = asyncHandler(async (req: any, res: Response, next: N
       title,
       comment,
       isVerifiedPurchase: !!hasPurchased,
-      isApproved: isAdmin ? true : false,
+      isApproved: true,
     })
   }
 
-  if (review.isApproved) {
-    await updateProductRatings(targetProduct)
-  }
+  await updateProductRatings(targetProduct)
 
   res.status(201).json(ApiResponse.success(
     review, 
-    review.isApproved 
-      ? "Review published successfully!" 
-      : "Thank you! Your review has been submitted for moderation."
+    "Review published successfully!"
   ))
 })
 

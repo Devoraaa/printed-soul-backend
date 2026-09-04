@@ -18,7 +18,7 @@ const reviewSchema = new Schema<IReview>(
     rating: { type: Number, required: [true, "Rating is required"], min: 1, max: 5 },
     title: { type: String, trim: true },
     comment: { type: String, required: [true, "Review comment is required"], trim: true },
-    isApproved: { type: Boolean, default: false },
+    isApproved: { type: Boolean, default: true },
     isVerifiedPurchase: { type: Boolean, default: false },
   },
   { timestamps: true }
