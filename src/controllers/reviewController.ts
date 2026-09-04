@@ -47,11 +47,25 @@ export const adminGetReviews = asyncHandler(async (req: Request, res: Response) 
 export const approveReview = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const review = await Review.findByIdAndUpdate(req.params.id, { isApproved: true }, { new: true })
   if (!review) return next(new ApiError(404, "Review not found"))
+  
+  await updateProductRatings(review.product)
   res.json(ApiResponse.success(review, "Review approved"))
 })
 
 export const deleteReview = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const review = await Review.findByIdAndDelete(req.params.id)
   if (!review) return next(new ApiError(404, "Review not found"))
+
+  await updateProductRatings(review.product)
   res.json(ApiResponse.success({}, "Review deleted"))
 })
+
+async function updateProductRatings(productId: any) {
+  const stats = await Review.aggregate([
+    { $match: { product: productId, isApproved: true } },
+    { $group: { _id: "$product", avgRating: { $avg: "$rating" }, count: { $sum: 1 } } },
+  ])
+  const average = stats.length > 0 ? Math.round(stats[0].avgRating * 10) / 10 : 0
+  const count = stats.length > 0 ? stats[0].count : 0
+  await Order.db.model("Product").findByIdAndUpdate(productId, { "ratings.average": average, "ratings.count": count })
+}
