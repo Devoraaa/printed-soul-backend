@@ -17,20 +17,54 @@ export const createReview = asyncHandler(async (req: any, res: Response, next: N
   const { productId, product, rating, title, comment } = req.body
   const targetProduct = productId || product
 
-  // Check if user has purchased this product (skip check for admins)
-  const isAdmin = req.user.role === "admin" || req.user.role === "superadmin";
+  if (!rating || rating < 1 || rating > 5) {
+    return next(new ApiError(400, "Please select a rating between 1 and 5 stars"))
+  }
+
+  if (!comment || !comment.trim()) {
+    return next(new ApiError(400, "Review comment cannot be empty"))
+  }
+
+  // Check if user has purchased this product (marks verified badge)
   const hasPurchased = await Order.findOne({
     user: req.user.id,
     "items.product": targetProduct,
     status: "delivered",
   })
-  if (!hasPurchased && !isAdmin) return next(new ApiError(403, "You can only review products you have purchased"))
 
-  const existing = await Review.findOne({ product: targetProduct, user: req.user.id })
-  if (existing) return next(new ApiError(400, "You have already reviewed this product"))
+  const isAdmin = req.user.role === "admin" || req.user.role === "superadmin"
 
-  const review = await Review.create({ product: targetProduct, user: req.user.id, rating, title, comment })
-  res.status(201).json(ApiResponse.success(review, "Review submitted — pending approval"))
+  // Check if user already reviewed - update it instead of throwing error
+  let review = await Review.findOne({ product: targetProduct, user: req.user.id })
+  if (review) {
+    review.rating = rating
+    review.title = title
+    review.comment = comment
+    review.isVerifiedPurchase = !!hasPurchased
+    review.isApproved = isAdmin ? true : false
+    await review.save()
+  } else {
+    review = await Review.create({
+      product: targetProduct,
+      user: req.user.id,
+      rating,
+      title,
+      comment,
+      isVerifiedPurchase: !!hasPurchased,
+      isApproved: isAdmin ? true : false,
+    })
+  }
+
+  if (review.isApproved) {
+    await updateProductRatings(targetProduct)
+  }
+
+  res.status(201).json(ApiResponse.success(
+    review, 
+    review.isApproved 
+      ? "Review published successfully!" 
+      : "Thank you! Your review has been submitted for moderation."
+  ))
 })
 
 // Admin

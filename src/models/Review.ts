@@ -7,6 +7,7 @@ export interface IReview extends Document {
   title?: string
   comment: string
   isApproved: boolean
+  isVerifiedPurchase?: boolean
   createdAt: Date
 }
 
@@ -18,6 +19,7 @@ const reviewSchema = new Schema<IReview>(
     title: { type: String, trim: true },
     comment: { type: String, required: [true, "Review comment is required"], trim: true },
     isApproved: { type: Boolean, default: false },
+    isVerifiedPurchase: { type: Boolean, default: false },
   },
   { timestamps: true }
 )
