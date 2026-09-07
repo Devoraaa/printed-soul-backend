@@ -26,6 +26,8 @@ import automationRoutes from "./routes/automationRoutes"
 import bannerRoutes from "./routes/bannerRoutes"
 import botRoutes from "./routes/botRoutes"
 import socialPostRoutes from "./routes/socialPostRoutes"
+import sitemapRoutes from "./routes/sitemapRoutes"
+import contactRoutes from "./routes/contactRoutes"
 
 // Initialize background workers
 import "./workers/mockupWorker"
@@ -112,6 +114,9 @@ app.use("/api/images", imageRoutes)
 app.use("/api/banners", bannerRoutes)
 app.use("/api/bot", botRoutes)
 app.use("/api/social-posts", socialPostRoutes)
+app.use("/api/contact", contactRoutes)
+app.use("/api", sitemapRoutes)
+app.use("/", sitemapRoutes)
 
 // ── 404 ───────────────────────────────────────────────────────────────────
 app.use("*", (req: Request, res: Response) => {

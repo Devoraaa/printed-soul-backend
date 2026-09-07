@@ -131,11 +131,12 @@ export const mockupWorker = new Worker(
 
     if (coverType && templatesToUse.length > 0) {
       const templateId = coverType === "dual-protection" ? "dual-protection" : "metal-glass"
-      const filtered = templatesToUse.filter((t) => t.id === templateId)
+      const filtered = templatesToUse.filter((t) => t.id === templateId || t.id?.toLowerCase().includes(templateId) || t.name?.toLowerCase().includes(coverType))
       if (filtered.length > 0) {
         templatesToUse = filtered
       } else {
-        throw new Error(`No template found with id "${templateId}" for device "${phoneModel.name}". Add the template from Admin > Devices first.`)
+        // Fallback to the first available template configured for this phone model
+        templatesToUse = [templatesToUse[0]]
       }
     }
 

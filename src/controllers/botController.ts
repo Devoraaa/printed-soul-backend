@@ -40,11 +40,12 @@ async function saveUploadedFile(file: Express.Multer.File) {
 // Returns brands + categories for bot menu building
 // ─────────────────────────────────────────────────────────────────────────────
 export const getBotCatalogInfo = asyncHandler(async (_req: Request, res: Response) => {
-  const [brands, categories] = await Promise.all([
+  const [brands, categories, devices] = await Promise.all([
     Brand.find({ isActive: true }).select("_id name slug").sort("name"),
-    Category.find({ isActive: true }).select("_id name slug").sort("sortOrder name"),
+    Category.find({ isActive: true }).select("_id name slug parentCategory").sort("sortOrder name"),
+    DeviceModel.find({ isActive: true }).select("_id name displayName brand templates basePrice").sort("name"),
   ])
-  res.json(ApiResponse.success({ brands, categories }, "Catalog info fetched"))
+  res.json(ApiResponse.success({ brands, categories, devices }, "Catalog info fetched"))
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,22 +129,37 @@ export const botCreateDirectProduct = asyncHandler(async (req: Request, res: Res
 // File:   design (single design artwork image)
 // ─────────────────────────────────────────────────────────────────────────────
 export const botTriggerMobileCoverAutomation = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const { designName, coverType, categoryId, price, stock } = req.body
+  let { designName, coverType, categoryId, price, stock } = req.body
   let brandIds: string[] = []
+  let deviceIds: string[] = []
   try {
     brandIds = JSON.parse(req.body.brandIds || "[]")
   } catch {
     return next(new ApiError(400, "brandIds must be a valid JSON array"))
   }
+  try {
+    if (req.body.deviceIds) deviceIds = JSON.parse(req.body.deviceIds)
+  } catch {}
 
   const file = req.file as Express.Multer.File | undefined
 
   if (!designName?.trim()) return next(new ApiError(400, "designName is required"))
   if (!["dual-protection", "metal", "glass"].includes(coverType))
     return next(new ApiError(400, "coverType must be: dual-protection | metal | glass"))
-  if (!brandIds.length) return next(new ApiError(400, "Select at least one brand"))
+  if (!brandIds.length && !deviceIds.length) return next(new ApiError(400, "Select at least one brand or model"))
   if (!file) return next(new ApiError(400, "Design image is required"))
-  if (!categoryId) return next(new ApiError(400, "categoryId is required"))
+
+  // Auto-resolve categoryId if not provided:
+  // Map coverType to sub-category (dual-case, metal-case, glass-case) or covers
+  if (!categoryId) {
+    const subSlug = coverType === "dual-protection" ? "dual-case" : coverType === "metal" ? "metal-case" : "glass-case"
+    let cat = await Category.findOne({ slug: subSlug, isActive: true })
+    if (!cat) cat = await Category.findOne({ slug: "covers", isActive: true })
+    if (!cat) cat = await Category.findOne({ isActive: true })
+    categoryId = cat?._id
+  }
+
+  if (!categoryId) return next(new ApiError(400, "Category not found"))
 
   // Create Design record with the uploaded design image
   const imageUrl = `/uploads/${file.filename}`
@@ -154,19 +170,25 @@ export const botTriggerMobileCoverAutomation = asyncHandler(async (req: Request,
     status: "processing",
   })
 
-  // Collect all device models for the given brands
-  const devices = await DeviceModel.find({ brand: { $in: brandIds }, isActive: true })
+  // Collect devices: either specific deviceIds or all devices for selected brandIds
+  let deviceQuery: any = { isActive: true }
+  if (deviceIds.length > 0) {
+    deviceQuery._id = { $in: deviceIds }
+  } else {
+    deviceQuery.brand = { $in: brandIds }
+  }
+
+  const devices = await DeviceModel.find(deviceQuery)
     .select("_id name brand templates basePrice")
 
-  // Filter devices that actually have the required template
-  const templateId = coverType === "dual-protection" ? "dual-protection" : "metal-glass"
-  const validDevices = devices.filter((d) => d.templates?.some((t) => t.id === templateId))
+  // Filter devices that have at least one template configured
+  const validDevices = devices.filter((d) => d.templates && d.templates.length > 0)
   const skippedDevices = devices.length - validDevices.length
 
   if (validDevices.length === 0) {
     // Clean up design record since nothing will process
     await Design.findByIdAndDelete(design._id)
-    return next(new ApiError(400, `No devices found with template "${templateId}". Please add templates from Admin > Devices first.`))
+    return next(new ApiError(400, `Chune gaye phone models ke paas koi template configured nahi hai. Admin > Devices se template add karein.`))
   }
 
   // Update design with total count and queue jobs
@@ -193,7 +215,7 @@ export const botTriggerMobileCoverAutomation = asyncHandler(async (req: Request,
       totalDevices: validDevices.length,
       skippedDevices,
       status: "processing",
-      message: `Mockup generation started for ${validDevices.length} devices. ${skippedDevices > 0 ? `${skippedDevices} devices skipped (no ${templateId} template).` : ""}`,
+      message: `Mockup generation started for ${validDevices.length} devices. ${skippedDevices > 0 ? `${skippedDevices} devices skipped (template missing).` : ""}`,
     },
     "Mobile cover automation triggered"
   ))

@@ -8,6 +8,7 @@ export interface IReview extends Document {
   comment: string
   isApproved: boolean
   isVerifiedPurchase?: boolean
+  helpfulVotes?: mongoose.Types.ObjectId[]
   createdAt: Date
 }
 
@@ -20,6 +21,7 @@ const reviewSchema = new Schema<IReview>(
     comment: { type: String, required: [true, "Review comment is required"], trim: true },
     isApproved: { type: Boolean, default: true },
     isVerifiedPurchase: { type: Boolean, default: false },
+    helpfulVotes: { type: [{ type: Schema.Types.ObjectId, ref: 'User' }], default: [] },
   },
   { timestamps: true }
 )
