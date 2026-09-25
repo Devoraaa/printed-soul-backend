@@ -24,6 +24,7 @@ export const uploadImages = asyncHandler(async (req: any, res: Response, next: N
 
 import path from "path"
 import fs from "fs"
+import { getUploadDir } from "../utils/upload"
 
 // Serve image by ID (public)
 export const serveImage = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
@@ -31,7 +32,8 @@ export const serveImage = asyncHandler(async (req: Request, res: Response, next:
   if (!image) return next(new ApiError(404, "Image not found"))
 
   if (image.url && image.url.startsWith("/uploads")) {
-    const filepath = path.join(__dirname, "../../public", image.url.replace(/^\//, ""))
+    const uploadDir = getUploadDir()
+    const filepath = path.join(uploadDir, image.url.replace(/^\/uploads\/?/, ""))
     
     // Check if file exists to prevent 500 ENOENT error stack traces
     if (!fs.existsSync(filepath)) {

@@ -7,6 +7,7 @@ import cookieParser from "cookie-parser"
 import rateLimit from "express-rate-limit"
 
 import path from "path"
+import fs from "fs"
 dotenv.config({ path: path.resolve(__dirname, "../.env") }) // Reload env configuration instantly now
 
 import { connectDB } from "./config/db"
@@ -94,7 +95,8 @@ if (process.env.NODE_ENV !== "test") {
 }
 
 // ── Static Files ──────────────────────────────────────────────────────────
-app.use("/uploads", express.static(path.join(__dirname, "../public/uploads")))
+const uploadStaticDir = process.env.STORAGE_PATH || (fs.existsSync("/var/www/storage/uploads") ? "/var/www/storage/uploads" : path.join(__dirname, "../public/uploads"))
+app.use("/uploads", express.static(uploadStaticDir))
 
 // ── Health Check ──────────────────────────────────────────────────────────
 app.get("/api/health", (req: Request, res: Response) => {

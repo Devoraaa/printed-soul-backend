@@ -23,6 +23,10 @@ export async function fetchAsBuffer(urlOrPath: string): Promise<Buffer> {
   // Local file
   const safePath = urlOrPath.replace(/^\/api\//, "").replace(/^\/+/, "")
   let filepath = path.join(__dirname, "../../public", safePath)
+  if (safePath.startsWith("uploads")) {
+    const { getUploadDir } = require("../utils/upload")
+    filepath = path.join(getUploadDir(), safePath.replace(/^uploads\/?/, ""))
+  }
   
   if (!fs.existsSync(filepath)) {
     // Fallback just in case

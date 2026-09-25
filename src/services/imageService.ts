@@ -3,8 +3,9 @@ import mongoose from "mongoose"
 import path from "path"
 import fs from "fs"
 import sharp from "sharp"
+import { getUploadDir } from "../utils/upload"
 
-const uploadDir = path.join(__dirname, "../../public/uploads")
+const uploadDir = getUploadDir()
 
 export const imageService = {
   /**

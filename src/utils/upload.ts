@@ -4,7 +4,18 @@ import path from "path"
 import fs from "fs"
 import sharp from "sharp"
 
-const uploadDir = path.join(__dirname, "../../public/uploads")
+export const getUploadDir = (): string => {
+  if (process.env.STORAGE_PATH) {
+    return process.env.STORAGE_PATH.endsWith("uploads")
+      ? process.env.STORAGE_PATH
+      : path.join(process.env.STORAGE_PATH, "uploads")
+  }
+  return fs.existsSync("/var/www/storage/uploads")
+    ? "/var/www/storage/uploads"
+    : path.join(__dirname, "../../public/uploads")
+}
+
+const uploadDir = getUploadDir()
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true })
 }
@@ -114,7 +125,7 @@ export const optimizeImages = async (req: any, res: any, next: any) => {
 }
 
 export async function uploadBuffer(filePath: string, buffer: Buffer, contentType?: string): Promise<string> {
-  const dir = path.join(__dirname, "../../public/uploads")
+  const dir = getUploadDir()
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true })
   }
