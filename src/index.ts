@@ -41,6 +41,7 @@ if (process.env.MONGODB_URI) {
 }
 
 const app: Express = express()
+app.set("trust proxy", 1)
 const port = process.env.PORT || 5000
 
 // ── Security ──────────────────────────────────────────────────────────────
