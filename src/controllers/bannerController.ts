@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express"
 import { Banner } from "../models/Banner"
+import { Ticker } from "../models/Ticker"
 import { asyncHandler } from "../api/asyncHandler"
 import { ApiError } from "../api/ApiError"
 import { ApiResponse } from "../api/ApiResponse"
@@ -88,4 +89,48 @@ export const deleteBanner = asyncHandler(async (req: Request, res: Response, nex
   }
 
   res.json(ApiResponse.success(null, "Banner deleted successfully"))
+})
+
+export const getTicker = asyncHandler(async (req: Request, res: Response) => {
+  let ticker = await Ticker.findOne()
+  if (!ticker) {
+    ticker = await Ticker.create({})
+  }
+  res.json(ApiResponse.success(ticker, "Ticker fetched successfully"))
+})
+
+export const adminGetTicker = asyncHandler(async (req: Request, res: Response) => {
+  let ticker = await Ticker.findOne()
+  if (!ticker) {
+    ticker = await Ticker.create({})
+  }
+  res.json(ApiResponse.success(ticker, "Ticker fetched successfully"))
+})
+
+export const updateTicker = asyncHandler(async (req: Request, res: Response) => {
+  const { rawText, items, isActive } = req.body
+
+  let ticker = await Ticker.findOne()
+  if (!ticker) {
+    ticker = new Ticker()
+  }
+
+  if (isActive !== undefined) {
+    ticker.isActive = Boolean(isActive)
+  }
+
+  if (rawText !== undefined) {
+    ticker.rawText = String(rawText)
+    const parsed = String(rawText)
+      .split("\n")
+      .map((line: string) => line.trim())
+      .filter((line: string) => line.length > 0)
+    ticker.items = parsed
+  } else if (items !== undefined && Array.isArray(items)) {
+    ticker.items = items.map((i: any) => String(i).trim()).filter(Boolean)
+    ticker.rawText = ticker.items.join("\n")
+  }
+
+  await ticker.save()
+  res.json(ApiResponse.success(ticker, "Ticker updated successfully"))
 })
