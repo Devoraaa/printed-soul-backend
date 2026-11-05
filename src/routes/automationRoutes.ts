@@ -118,6 +118,53 @@ router.post("/designs", upload.single("design"), async (req: any, res: any) => {
   }
 })
 
+// ── Universal Automation Route (For Tote Bags, Mousepads, Mugs, Coasters, etc.) ──
+router.post("/universal-designs", upload.single("design"), async (req: any, res: any) => {
+  try {
+    const { title, categoryId, productTemplateIds, price, comparePrice, stock, description } = req.body
+    const templateIds = JSON.parse(productTemplateIds || "[]")
+
+    if (!req.file) return res.status(400).json({ error: "design image is required" })
+    if (templateIds.length === 0) return res.status(400).json({ error: "select at least one product model / template" })
+
+    const filename = req.file.filename
+    const imageUrl = `/uploads/${filename}`
+
+    const { Category } = await import("../models/Category")
+    const categoryDoc = await Category.findById(categoryId)
+    if (!categoryDoc) return res.status(400).json({ error: "Valid category is required" })
+
+    const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")
+    const designSlug = slugify(title)
+
+    const design = await Design.create({
+      title,
+      imageUrl,
+      categoryId,
+      totalModels: templateIds.length,
+      status: "processing",
+    })
+
+    const jobExtras: any = { designSlug, categoryId, isUniversal: true }
+    if (price) jobExtras.price = parseFloat(price)
+    if (comparePrice) jobExtras.comparePrice = parseFloat(comparePrice)
+    if (stock) jobExtras.stock = parseInt(stock)
+    if (description) jobExtras.description = description
+
+    await mockupQueue.addBulk(
+      templateIds.map((productTemplateId: string) => ({
+        name: "generate-mockup",
+        data: { designId: design._id.toString(), productTemplateId, ...jobExtras },
+      }))
+    )
+
+    res.status(201).json(design)
+  } catch (err: any) {
+    console.error("Universal Automation Route Error:", err)
+    res.status(500).json({ message: err.message || "Failed to create universal design job" })
+  }
+})
+
 
 router.post("/designs/:id/add-models", async (req: any, res: any) => {
   try {

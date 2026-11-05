@@ -3,6 +3,7 @@ import sharp from "sharp"
 import axios from "axios"
 import { v4 as uuid } from "uuid"
 import { DeviceModel } from "../models/DeviceModel"
+import { ProductTemplate } from "../models/ProductTemplate"
 import { Design } from "../models/Design"
 import { Product } from "../models/Product"
 import { Image } from "../models/Image"
@@ -108,8 +109,84 @@ export async function generateSingleMockup(
 export const mockupWorker = new Worker(
   "mockup-generation",
   async (job) => {
-    const { designId, phoneModelId } = job.data
+    const { designId, phoneModelId, productTemplateId } = job.data
 
+    // ═════════════════════════════════════════════════════════════════
+    // 1. UNIVERSAL PRODUCT TEMPLATE FLOW (Tote Bags, Mousepads, Mugs, Coasters, etc.)
+    // ═════════════════════════════════════════════════════════════════
+    if (productTemplateId) {
+      const [design, pTemplate] = await Promise.all([
+        Design.findById(designId),
+        ProductTemplate.findById(productTemplateId).populate("category"),
+      ])
+      if (!design || !pTemplate) throw new Error("Design or ProductTemplate not found")
+
+      if (!pTemplate.templates || pTemplate.templates.length === 0) {
+        throw new Error(`Templates or print coordinates missing for: ${pTemplate.name}. Please set them from Catalog → Product Templates.`)
+      }
+
+      const finalPrice = job.data.price || pTemplate.basePrice || 499
+      const finalComparePrice = job.data.comparePrice || pTemplate.comparePrice || 999
+      const finalStock = job.data.stock || 10
+
+      const designBuffer = await fetchAsBuffer(design.imageUrl)
+      const generatedImageIds = []
+
+      for (const template of pTemplate.templates) {
+        if (!template.printArea) continue
+
+        const buffer = await generateSingleMockup(
+          designBuffer,
+          template.templateImageUrl,
+          template.printArea,
+          template.cameraArea,
+          template.blendMode || "multiply",
+          template.overlayImageUrl
+        )
+        const filename = `mockups/${designId}/${productTemplateId}-${template.id}-${uuid()}.jpg`
+        const url = await uploadBuffer(filename, buffer, "image/jpeg")
+        const imgDoc = await Image.create({
+          filename: filename.split("/").pop(),
+          contentType: "image/jpeg",
+          size: buffer.length,
+          url: url,
+        })
+        generatedImageIds.push(imgDoc._id)
+      }
+
+      const categoryName = (pTemplate.category as any)?.name || "Product"
+      const sku = `${design._id}-${pTemplate.slug}`.replace(/\s+/g, "-").toUpperCase()
+
+      const productName = job.data.productName || `${design.title} ${pTemplate.displayName || pTemplate.name}`
+      const desc = job.data.description || pTemplate.description || `Premium custom ${categoryName.toLowerCase()} featuring ${design.title}`
+
+      await Product.findOneAndUpdate(
+        { slug: sku.toLowerCase() },
+        {
+          name: productName,
+          slug: sku.toLowerCase(),
+          shortDescription: "",
+          description: desc,
+          price: finalPrice,
+          comparePrice: finalComparePrice,
+          category: pTemplate.category,
+          isActive: true,
+          status: "active",
+          stock: finalStock,
+          sku,
+          designSlug: job.data.designSlug || undefined,
+          $addToSet: { images: { $each: generatedImageIds } },
+        },
+        { upsert: true, new: true }
+      )
+
+      await Design.findByIdAndUpdate(designId, { $inc: { generatedCount: 1 } })
+      return { mockupUrls: generatedImageIds }
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // 2. PHONE COVERS FLOW (Apple, Samsung, Vivo, etc. — 100% Intact)
+    // ═════════════════════════════════════════════════════════════════
     const [design, phoneModel] = await Promise.all([
       Design.findById(designId),
       DeviceModel.findById(phoneModelId).populate("brand"),
@@ -214,7 +291,7 @@ export const mockupWorker = new Worker(
 )
 
 mockupWorker.on("failed", async (job: any, err: Error) => {
-  console.error(`Mockup job failed [design=${job?.data?.designId} model=${job?.data?.phoneModelId}]:`, err.message)
+  console.error(`Mockup job failed [design=${job?.data?.designId} item=${job?.data?.phoneModelId || job?.data?.productTemplateId}]:`, err.message)
   if (job?.data?.designId) {
     const design = await Design.findByIdAndUpdate(job.data.designId, { $inc: { failedCount: 1 } }, { new: true })
     if (design && design.generatedCount + design.failedCount >= design.totalModels) {
