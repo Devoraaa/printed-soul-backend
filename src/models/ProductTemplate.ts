@@ -27,7 +27,13 @@ const productTemplateSchema = new Schema<IProductTemplate>(
     category: { type: Schema.Types.ObjectId, ref: "Category", required: [true, "Category is required"] },
     name: { type: String, required: [true, "Product model/size name is required"], trim: true },
     slug: { type: String, required: true, lowercase: true },
-    displayName: { type: String, required: true, trim: true },
+    displayName: {
+      type: String,
+      trim: true,
+      default: function () {
+        return (this as any).name || ""
+      },
+    },
     isActive: { type: Boolean, default: true },
     basePrice: { type: Number, default: 499 },
     comparePrice: { type: Number, default: 999 },
@@ -37,13 +43,13 @@ const productTemplateSchema = new Schema<IProductTemplate>(
         id: { type: String, required: true },
         name: { type: String, required: true },
         templateImageUrl: { type: String, required: true },
-        overlayImageUrl: { type: String },
+        overlayImageUrl: { type: String, default: "" },
         blendMode: { type: String, default: "over" },
         printArea: {
-          x: { type: Number },
-          y: { type: Number },
-          width: { type: Number },
-          height: { type: Number },
+          x: { type: Number, default: 0 },
+          y: { type: Number, default: 0 },
+          width: { type: Number, default: 100 },
+          height: { type: Number, default: 100 },
           borderRadius: { type: Number, default: 0 },
         },
         cameraArea: {

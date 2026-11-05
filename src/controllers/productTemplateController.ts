@@ -44,12 +44,13 @@ export const createProductTemplate = asyncHandler(async (req: Request, res: Resp
 
   const catId = category || categoryId
   if (!catId) return next(new ApiError(400, "Category is required"))
-  if (!name) return next(new ApiError(400, "Name is required"))
+  if (!name || !name.trim()) return next(new ApiError(400, "Name is required"))
 
   const categoryDoc = await Category.findById(catId)
   if (!categoryDoc) return next(new ApiError(404, "Category not found"))
 
-  const baseSlug = `${slugify(categoryDoc.name)}-${slugify(name)}`
+  const trimmedName = name.trim()
+  const baseSlug = `${slugify(categoryDoc.name)}-${slugify(trimmedName)}`
   let slug = baseSlug
   let count = 1
   while (await ProductTemplate.findOne({ slug })) {
@@ -57,13 +58,16 @@ export const createProductTemplate = asyncHandler(async (req: Request, res: Resp
     count++
   }
 
+  const parsedBasePrice = basePrice !== undefined && !isNaN(parseFloat(basePrice)) ? parseFloat(basePrice) : 499
+  const parsedComparePrice = comparePrice !== undefined && !isNaN(parseFloat(comparePrice)) ? parseFloat(comparePrice) : 999
+
   const productTemplate = await ProductTemplate.create({
     category: catId,
-    name,
-    displayName: displayName || name,
+    name: trimmedName,
+    displayName: (displayName && displayName.trim()) || trimmedName,
     slug,
-    basePrice: basePrice ? parseFloat(basePrice) : 499,
-    comparePrice: comparePrice ? parseFloat(comparePrice) : 999,
+    basePrice: parsedBasePrice,
+    comparePrice: parsedComparePrice,
     description: description || "",
     templates: templates || [],
   })
@@ -80,13 +84,30 @@ export const updateProductTemplate = asyncHandler(async (req: Request, res: Resp
   const productTemplate = await ProductTemplate.findById(id)
   if (!productTemplate) return next(new ApiError(404, "Product template not found"))
 
-  if (name !== undefined) productTemplate.name = name
-  if (displayName !== undefined) productTemplate.displayName = displayName
-  if (basePrice !== undefined) productTemplate.basePrice = parseFloat(basePrice)
-  if (comparePrice !== undefined) productTemplate.comparePrice = parseFloat(comparePrice)
-  if (description !== undefined) productTemplate.description = description
-  if (isActive !== undefined) productTemplate.isActive = isActive === true || isActive === "true"
-  if (templates !== undefined) productTemplate.templates = templates
+  if (name !== undefined && name.trim()) {
+    productTemplate.name = name.trim()
+  }
+  if (displayName !== undefined) {
+    productTemplate.displayName = displayName.trim() || productTemplate.name
+  }
+  if (!productTemplate.displayName) {
+    productTemplate.displayName = productTemplate.name
+  }
+  if (basePrice !== undefined && !isNaN(parseFloat(basePrice))) {
+    productTemplate.basePrice = parseFloat(basePrice)
+  }
+  if (comparePrice !== undefined && !isNaN(parseFloat(comparePrice))) {
+    productTemplate.comparePrice = parseFloat(comparePrice)
+  }
+  if (description !== undefined) {
+    productTemplate.description = description
+  }
+  if (isActive !== undefined) {
+    productTemplate.isActive = isActive === true || isActive === "true"
+  }
+  if (templates !== undefined) {
+    productTemplate.templates = templates
+  }
 
   await productTemplate.save()
   await productTemplate.populate("category", "name slug image")
