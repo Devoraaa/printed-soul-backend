@@ -26,12 +26,18 @@ router.route("/admin/ticker")
   .get(adminGetTicker)
   .put(updateTicker)
 
+const bannerUploadFields = upload.fields([
+  { name: "images", maxCount: 1 },
+  { name: "image", maxCount: 1 },
+  { name: "mobileImage", maxCount: 1 },
+])
+
 router.route("/admin")
   .get(adminGetBanners)
-  .post(upload.array("images", 1), optimizeImages, createBanner)
+  .post(bannerUploadFields, optimizeImages, createBanner)
 
 router.route("/admin/:id")
-  .put(upload.array("images", 1), optimizeImages, updateBanner)
+  .put(bannerUploadFields, optimizeImages, updateBanner)
   .delete(deleteBanner)
 
 export default router

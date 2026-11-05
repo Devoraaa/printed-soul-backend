@@ -10,6 +10,7 @@ export const getBanners = asyncHandler(async (req: Request, res: Response) => {
   // Public route - only fetch active banners
   const banners = await Banner.find({ isActive: true })
     .populate("imageUrl")
+    .populate("mobileImageUrl")
     .sort({ order: 1, createdAt: -1 })
 
   res.json(ApiResponse.success(banners, "Active banners fetched successfully"))
@@ -19,6 +20,7 @@ export const adminGetBanners = asyncHandler(async (req: Request, res: Response) 
   // Admin route - fetch all banners
   const banners = await Banner.find()
     .populate("imageUrl")
+    .populate("mobileImageUrl")
     .sort({ order: 1, createdAt: -1 })
 
   res.json(ApiResponse.success(banners, "All banners fetched successfully"))
@@ -27,13 +29,32 @@ export const adminGetBanners = asyncHandler(async (req: Request, res: Response) 
 export const createBanner = asyncHandler(async (req: any, res: Response, next: NextFunction) => {
   const { title, link, isActive, order, type } = req.body
 
-  if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
+  let desktopFile: Express.Multer.File | undefined
+  let mobileFile: Express.Multer.File | undefined
+
+  if (req.files) {
+    if (Array.isArray(req.files)) {
+      desktopFile = req.files[0]
+      if (req.files.length > 1) mobileFile = req.files[1]
+    } else {
+      desktopFile = req.files.image?.[0] || req.files.images?.[0]
+      mobileFile = req.files.mobileImage?.[0]
+    }
+  }
+
+  if (!desktopFile) {
     return next(new ApiError(400, "Banner image is required"))
   }
 
-  const imageIds = await imageService.saveImages(req.files, req.user?.id)
-  if (imageIds.length === 0) {
+  const desktopImageIds = await imageService.saveImages([desktopFile], req.user?.id)
+  if (desktopImageIds.length === 0) {
     return next(new ApiError(500, "Failed to process banner image"))
+  }
+
+  let mobileImageId: string | undefined
+  if (mobileFile) {
+    const mobileIds = await imageService.saveImages([mobileFile], req.user?.id)
+    if (mobileIds.length > 0) mobileImageId = mobileIds[0]
   }
 
   const banner = await Banner.create({
@@ -42,17 +63,18 @@ export const createBanner = asyncHandler(async (req: any, res: Response, next: N
     isActive: isActive === "true" || isActive === true,
     order: parseInt(order) || 0,
     type: type || "hero",
-    imageUrl: imageIds[0],
+    imageUrl: desktopImageIds[0],
+    mobileImageUrl: mobileImageId,
   })
 
-  await banner.populate("imageUrl")
+  await banner.populate(["imageUrl", "mobileImageUrl"])
 
   res.status(201).json(ApiResponse.success(banner, "Banner created successfully"))
 })
 
 export const updateBanner = asyncHandler(async (req: any, res: Response, next: NextFunction) => {
   const { id } = req.params
-  const { title, link, isActive, order, type } = req.body
+  const { title, link, isActive, order, type, removeMobileImage } = req.body
 
   let banner = await Banner.findById(id)
   if (!banner) {
@@ -66,16 +88,39 @@ export const updateBanner = asyncHandler(async (req: any, res: Response, next: N
   if (order !== undefined) banner.order = parseInt(order)
   if (type !== undefined) banner.type = type
 
-  // Handle new image upload if exists
-  if (req.files && Array.isArray(req.files) && req.files.length > 0) {
-    const imageIds = await imageService.saveImages(req.files, req.user?.id)
-    if (imageIds.length > 0) {
-      banner.imageUrl = imageIds[0] as any
+  // Handle image updates
+  if (req.files) {
+    let desktopFile: Express.Multer.File | undefined
+    let mobileFile: Express.Multer.File | undefined
+
+    if (Array.isArray(req.files)) {
+      if (req.files.length > 0) desktopFile = req.files[0]
+    } else {
+      desktopFile = req.files.image?.[0] || req.files.images?.[0]
+      mobileFile = req.files.mobileImage?.[0]
+    }
+
+    if (desktopFile) {
+      const imageIds = await imageService.saveImages([desktopFile], req.user?.id)
+      if (imageIds.length > 0) {
+        banner.imageUrl = imageIds[0] as any
+      }
+    }
+
+    if (mobileFile) {
+      const mobileIds = await imageService.saveImages([mobileFile], req.user?.id)
+      if (mobileIds.length > 0) {
+        banner.mobileImageUrl = mobileIds[0] as any
+      }
     }
   }
 
+  if (removeMobileImage === "true" || removeMobileImage === true) {
+    banner.mobileImageUrl = undefined
+  }
+
   await banner.save()
-  await banner.populate("imageUrl")
+  await banner.populate(["imageUrl", "mobileImageUrl"])
 
   res.json(ApiResponse.success(banner, "Banner updated successfully"))
 })

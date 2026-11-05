@@ -12,6 +12,10 @@ const bannerSchema = new mongoose.Schema(
       ref: "Image",
       required: true,
     },
+    mobileImageUrl: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Image",
+    },
     link: {
       type: String,
       trim: true,
