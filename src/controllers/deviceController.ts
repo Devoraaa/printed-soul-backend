@@ -29,8 +29,40 @@ export const createDeviceModel = asyncHandler(async (req: any, res: Response, ne
   const brandDoc = await Brand.findById(brand)
   if (!brandDoc) return next(new ApiError(404, "Brand not found"))
 
-  const slug = slugify(brandDoc.slug, name)
-  const device = await DeviceModel.create({ brand, name, slug, displayName, releaseYear })
+  const cleanName = (name || "").trim().toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-")
+  const slug = slugify(brandDoc.slug, cleanName)
+
+  // 1. If a soft-deleted device model with this slug exists, restore and update it!
+  const deletedDevice = await DeviceModel.findOne({ slug, isDeleted: true })
+  if (deletedDevice) {
+    deletedDevice.brand = brand
+    deletedDevice.name = cleanName
+    deletedDevice.displayName = (displayName || "").trim() || deletedDevice.displayName
+    deletedDevice.isActive = true
+    if (releaseYear) deletedDevice.releaseYear = releaseYear
+    ;(deletedDevice as any).isDeleted = false
+    ;(deletedDevice as any).deletedAt = null
+    ;(deletedDevice as any).deletedBy = null
+    await deletedDevice.save()
+    await deletedDevice.populate("brand", "name slug")
+    return res.status(200).json(ApiResponse.success(deletedDevice, "Device model restored successfully"))
+  }
+
+  // 2. If an active device model with this slug already exists, return friendly 400
+  const activeDevice = await DeviceModel.findOne({ slug, isDeleted: false })
+  if (activeDevice) {
+    return next(new ApiError(400, `Device model "${activeDevice.displayName}" with slug "${slug}" already exists.`))
+  }
+
+  // 3. Otherwise create new device model
+  const device = await DeviceModel.create({
+    brand,
+    name: cleanName,
+    slug,
+    displayName: (displayName || "").trim() || cleanName,
+    releaseYear,
+  })
+  await device.populate("brand", "name slug")
   res.status(201).json(ApiResponse.success(device, "Device model created"))
 })
 
@@ -47,6 +79,10 @@ export const updateDeviceModel = asyncHandler(async (req: Request, res: Response
 export const deleteDeviceModel = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const device = await DeviceModel.findById(req.params.id)
   if (!device) return next(new ApiError(404, "Device model not found"))
+  
+  // Suffix slug on delete so original slug is instantly freed for re-creation
+  device.slug = `${device.slug}__del_${Date.now()}`
+  await device.save()
   await (device as any).softDelete()
   res.json(ApiResponse.success({}, "Device model deleted"))
 })
