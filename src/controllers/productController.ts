@@ -556,27 +556,33 @@ export const generateModelsForProduct = asyncHandler(async (req: any, res: Respo
   const { id } = req.params
   const { deviceModelIds, caseTypes } = req.body
 
-  let modelIds: string[] = []
+  let rawIds: any[] = []
   if (Array.isArray(deviceModelIds)) {
-    modelIds = deviceModelIds
+    rawIds = deviceModelIds
   } else if (typeof deviceModelIds === "string") {
     try {
-      modelIds = JSON.parse(deviceModelIds)
+      rawIds = JSON.parse(deviceModelIds)
     } catch {
-      modelIds = deviceModelIds.split(",").map((s) => s.trim()).filter(Boolean)
+      rawIds = deviceModelIds.replace(/[\[\]"]/g, "").split(",")
     }
   }
+  const modelIds = (Array.isArray(rawIds) ? rawIds : [rawIds])
+    .map((id) => String(id).replace(/["'[\]\\]/g, "").trim())
+    .filter((id) => mongoose.isValidObjectId(id))
 
-  let targetCaseTypes: string[] = []
+  let rawCaseTypes: any[] = []
   if (Array.isArray(caseTypes)) {
-    targetCaseTypes = caseTypes
+    rawCaseTypes = caseTypes
   } else if (typeof caseTypes === "string") {
     try {
-      targetCaseTypes = JSON.parse(caseTypes)
+      rawCaseTypes = JSON.parse(caseTypes)
     } catch {
-      targetCaseTypes = caseTypes.split(",").map((s) => s.trim()).filter(Boolean)
+      rawCaseTypes = caseTypes.replace(/[\[\]"]/g, "").split(",")
     }
   }
+  let targetCaseTypes = (Array.isArray(rawCaseTypes) ? rawCaseTypes : [rawCaseTypes])
+    .map((ct) => String(ct).replace(/["'[\]\\]/g, "").trim())
+    .filter(Boolean)
 
   if (!modelIds || modelIds.length === 0) {
     return next(new ApiError(400, "Please select at least one phone model to generate."))
@@ -596,14 +602,25 @@ export const generateModelsForProduct = asyncHandler(async (req: any, res: Respo
   const { Design } = await import("../models/Design")
   const { Category } = await import("../models/Category")
   const { v4: uuid } = await import("uuid")
+  const fs = await import("fs")
 
   // 1. Locate raw design artwork buffer
   let designBuffer: Buffer | null = null
   let designDoc: any = null
 
-  if (req.file && req.file.buffer) {
-    designBuffer = req.file.buffer
-  } else {
+  if (req.file) {
+    if (req.file.buffer) {
+      designBuffer = req.file.buffer
+    } else if (req.file.path && fs.existsSync(req.file.path)) {
+      try {
+        designBuffer = fs.readFileSync(req.file.path)
+      } catch (e) {
+        console.warn("Could not read req.file.path:", e)
+      }
+    }
+  }
+
+  if (!designBuffer) {
     // Try to find design doc from SKU prefix (<designId>-<brand>-<model>)
     const maybeDesignId = product.sku ? product.sku.split("-")[0] : null
     if (maybeDesignId && mongoose.isValidObjectId(maybeDesignId)) {
@@ -630,9 +647,14 @@ export const generateModelsForProduct = asyncHandler(async (req: any, res: Respo
     // Fallback: use first image of product if designDoc not found
     if (!designBuffer && product.images && product.images.length > 0) {
       const firstImg = product.images[0] as any
-      if (firstImg?.url) {
+      let firstImgUrl = firstImg?.url
+      if (!firstImgUrl) {
+        const imgDoc = await Image.findById(firstImg._id || firstImg)
+        if (imgDoc?.url) firstImgUrl = imgDoc.url
+      }
+      if (firstImgUrl) {
         try {
-          designBuffer = await fetchAsBuffer(firstImg.url)
+          designBuffer = await fetchAsBuffer(firstImgUrl)
         } catch (e) {
           console.warn("Could not fetch product image for mockup:", e)
         }
@@ -720,7 +742,7 @@ export const generateModelsForProduct = asyncHandler(async (req: any, res: Respo
       }
 
       try {
-        const generatedImageIds = []
+        const generatedImageIds: any[] = []
         for (const template of phoneModel.templates) {
           if (!template.printArea) continue
           await new Promise((resolve) => setImmediate(resolve))
@@ -756,42 +778,93 @@ export const generateModelsForProduct = asyncHandler(async (req: any, res: Respo
         // Clean target product name: e.g. "iPhone 17 Pro - Blorng - Dual Case"
         const targetProductName = `${phoneModel.displayName || phoneModel.name} - ${cleanDesignName} - ${caseLabel}`
 
-        // Create or update Product
-        const newProduct = await Product.findOneAndUpdate(
-          {
+        // Check if this model & caseType is the SOURCE product itself
+        const isSourceProduct =
+          String(product.caseType) === String(caseType) &&
+          (product.deviceModels || []).some((dm: any) => String(dm._id || dm) === String(phoneModel._id))
+
+        let targetProduct: any
+        if (isSourceProduct) {
+          product.name = targetProductName
+          product.sku = sku.toUpperCase()
+          product.deviceModels = [phoneModel._id]
+          product.caseType = caseType as any
+          product.designSlug = targetDesignSlug
+          product.category = targetCategory
+          for (const imgId of generatedImageIds) {
+            if (!product.images.some((im: any) => String(im._id || im) === String(imgId))) {
+              product.images.push(imgId)
+            }
+          }
+          await product.save()
+          targetProduct = product
+        } else {
+          // Dedicated sibling product: find or create EXCLUDING the source product
+          let sibling = await Product.findOne({
+            _id: { $ne: product._id },
             $or: [
               { sku: sku.toUpperCase() },
               { designSlug: targetDesignSlug, deviceModels: phoneModel._id },
             ],
-          },
-          {
-            name: targetProductName,
-            slug: sku.toLowerCase(),
-            shortDescription: product.shortDescription || "",
-            description: product.description || `Premium ${caseLabel} for ${phoneModel.displayName} featuring ${cleanDesignName}`,
-            price: product.price || 499,
-            comparePrice: product.comparePrice || 999,
-            category: targetCategory,
-            brand: phoneModel.brand?._id || phoneModel.brand || product.brand,
-            deviceModels: [phoneModel._id],
-            isActive: true,
-            status: "active",
-            stock: product.stock || 10,
-            sku: sku.toUpperCase(),
-            caseType: caseType,
-            designSlug: targetDesignSlug,
-            tags: product.tags || [],
-            $addToSet: { images: { $each: generatedImageIds } },
-          },
-          { upsert: true, new: true }
-        )
+          })
 
-        createdProducts.push(newProduct)
+          if (sibling) {
+            sibling.name = targetProductName
+            sibling.slug = sku.toLowerCase()
+            sibling.shortDescription = product.shortDescription || ""
+            sibling.description = product.description || `Premium ${caseLabel} for ${phoneModel.displayName} featuring ${cleanDesignName}`
+            sibling.price = product.price || 499
+            sibling.comparePrice = product.comparePrice || 999
+            sibling.category = targetCategory
+            sibling.brand = phoneModel.brand?._id || phoneModel.brand || product.brand
+            sibling.deviceModels = [phoneModel._id]
+            sibling.isActive = true
+            sibling.status = "active"
+            sibling.stock = product.stock || 10
+            sibling.sku = sku.toUpperCase()
+            sibling.caseType = caseType as any
+            sibling.designSlug = targetDesignSlug
+            sibling.tags = product.tags || []
+            for (const imgId of generatedImageIds) {
+              if (!sibling.images.some((im: any) => String(im._id || im) === String(imgId))) {
+                sibling.images.push(imgId)
+              }
+            }
+            await sibling.save()
+            targetProduct = sibling
+          } else {
+            targetProduct = await Product.create({
+              name: targetProductName,
+              slug: sku.toLowerCase(),
+              shortDescription: product.shortDescription || "",
+              description: product.description || `Premium ${caseLabel} for ${phoneModel.displayName} featuring ${cleanDesignName}`,
+              price: product.price || 499,
+              comparePrice: product.comparePrice || 999,
+              category: targetCategory,
+              brand: phoneModel.brand?._id || phoneModel.brand || product.brand,
+              deviceModels: [phoneModel._id],
+              isActive: true,
+              status: "active",
+              stock: product.stock || 10,
+              sku: sku.toUpperCase(),
+              caseType: caseType as any,
+              designSlug: targetDesignSlug,
+              tags: product.tags || [],
+              images: generatedImageIds,
+            })
+          }
+        }
+
+        createdProducts.push(targetProduct)
       } catch (err: any) {
         console.error(`Error generating mockup for model ${phoneModel.displayName} (${caseType}):`, err)
         failedModels.push(`${phoneModel.displayName} (${caseLabel}): ${err.message}`)
       }
     }
+  }
+
+  if (createdProducts.length === 0) {
+    return next(new ApiError(400, `Could not generate any mockups: ${failedModels.join(", ") || "No valid templates found for selected models."}`))
   }
 
   res.json(
