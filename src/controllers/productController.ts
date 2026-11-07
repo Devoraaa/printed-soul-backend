@@ -151,25 +151,48 @@ export const getProductBySlug = asyncHandler(async (req: Request, res: Response,
   // If this product belongs to a design (designSlug), find all companion phone models
   let siblingModels: any[] = []
   if (product.designSlug) {
+    const cleanBase = product.designSlug
+      .toLowerCase()
+      .replace(/-(dual|metal|glass|hard|soft|wallet)-case.*$/i, "")
+      .replace(/-(iphone|samsung|galaxy|vivo|oppo|xiaomi)[\w-]*$/i, "")
+      .replace(/-+$/, "")
+      .trim()
+
     const siblings = await Product.find({
-      designSlug: product.designSlug,
+      $and: [
+        {
+          $or: [
+            { designSlug: product.designSlug },
+            { designSlug: cleanBase },
+            { designSlug: new RegExp(`^${cleanBase}(-|$)`, "i") },
+          ],
+        },
+        {
+          $or: [{ status: "active" }, { status: { $exists: false } }, { status: null }],
+        },
+      ],
+      ...(product.caseType ? { caseType: product.caseType } : {}),
       isActive: true,
-      $or: [{ status: "active" }, { status: { $exists: false } }, { status: null }],
     })
       .populate("deviceModels", "name slug displayName brand")
-      .select("name slug deviceModels price comparePrice")
+      .select("name slug deviceModels price comparePrice caseType")
       .lean()
 
-    const seenModelIds = new Set<string>()
+    const modelToProductMap = new Map<string, any>()
 
-    siblings.forEach((s: any) => {
+    for (const s of siblings as any[]) {
       if (s.deviceModels && Array.isArray(s.deviceModels)) {
-        s.deviceModels.forEach((m: any) => {
+        for (const m of s.deviceModels as any[]) {
           if (m && m._id) {
             const mId = m._id.toString()
-            if (!seenModelIds.has(mId)) {
-              seenModelIds.add(mId)
-              siblingModels.push({
+            const existing = modelToProductMap.get(mId)
+            const isDedicated =
+              s.deviceModels.length === 1 ||
+              (m.name && s.slug?.toLowerCase().includes(String(m.name).toLowerCase())) ||
+              (m.slug && s.slug?.toLowerCase().includes(String(m.slug).toLowerCase()))
+
+            if (!existing || isDedicated) {
+              modelToProductMap.set(mId, {
                 _id: m._id,
                 name: m.name,
                 displayName: m.displayName || m.name,
@@ -180,9 +203,11 @@ export const getProductBySlug = asyncHandler(async (req: Request, res: Response,
               })
             }
           }
-        })
+        }
       }
-    })
+    }
+
+    siblingModels = Array.from(modelToProductMap.values())
   }
 
   // Also include product's own deviceModels if not already present
@@ -529,7 +554,7 @@ export const parseProductNameAPI = asyncHandler(async (req: Request, res: Respon
  */
 export const generateModelsForProduct = asyncHandler(async (req: any, res: Response, next: NextFunction) => {
   const { id } = req.params
-  const { deviceModelIds } = req.body
+  const { deviceModelIds, caseTypes } = req.body
 
   let modelIds: string[] = []
   if (Array.isArray(deviceModelIds)) {
@@ -542,6 +567,17 @@ export const generateModelsForProduct = asyncHandler(async (req: any, res: Respo
     }
   }
 
+  let targetCaseTypes: string[] = []
+  if (Array.isArray(caseTypes)) {
+    targetCaseTypes = caseTypes
+  } else if (typeof caseTypes === "string") {
+    try {
+      targetCaseTypes = JSON.parse(caseTypes)
+    } catch {
+      targetCaseTypes = caseTypes.split(",").map((s) => s.trim()).filter(Boolean)
+    }
+  }
+
   if (!modelIds || modelIds.length === 0) {
     return next(new ApiError(400, "Please select at least one phone model to generate."))
   }
@@ -549,11 +585,16 @@ export const generateModelsForProduct = asyncHandler(async (req: any, res: Respo
   const product = await Product.findById(id).populate("deviceModels").populate("images")
   if (!product) return next(new ApiError(404, "Product not found"))
 
+  if (!targetCaseTypes || targetCaseTypes.length === 0) {
+    targetCaseTypes = [product.caseType || "metal-case"]
+  }
+
   const { generateSingleMockup, fetchAsBuffer } = await import("../workers/mockupWorker")
   const { uploadBuffer } = await import("../utils/upload")
   const { Image } = await import("../models/Image")
   const { DeviceModel } = await import("../models/DeviceModel")
   const { Design } = await import("../models/Design")
+  const { Category } = await import("../models/Category")
   const { v4: uuid } = await import("uuid")
 
   // 1. Locate raw design artwork buffer
@@ -617,7 +658,9 @@ export const generateModelsForProduct = asyncHandler(async (req: any, res: Respo
       }
     }
   }
+  // Strip case types (e.g. Metal Case, Dual Case) so they don't duplicate
   cleanDesignName = cleanDesignName
+    .replace(/\b(dual|metal|glass|hard|soft|wallet)\s*case\b/gi, "")
     .replace(/^[-\s–—:|/]+|[-\s–—:|/]+$/g, "")
     .replace(/\s{2,}/g, " ")
     .trim()
@@ -627,107 +670,127 @@ export const generateModelsForProduct = asyncHandler(async (req: any, res: Respo
     cleanDesignName = parsed.designName || product.name
   }
 
-  // Ensure current product has a designSlug
+  const cleanBase = (product.designSlug || slugify(cleanDesignName))
+    .toLowerCase()
+    .replace(/-(dual|metal|glass|hard|soft|wallet)-case.*$/i, "")
+    .replace(/-(iphone|samsung|galaxy|vivo|oppo|xiaomi)[\w-]*$/i, "")
+    .replace(/-+$/, "")
+    .trim()
+
+  // Ensure current product has a clean designSlug
   if (!product.designSlug) {
-    const parsed = parseProductName(product.name)
-    product.designSlug = parsed.designSlug || slugify(cleanDesignName)
+    product.designSlug = `${cleanBase}-${product.caseType || "metal-case"}`
     await product.save()
+  }
+
+  const CASE_TYPE_LABELS: Record<string, string> = {
+    "dual-case": "Dual Case",
+    "metal-case": "Metal Case",
+    "glass-case": "Glass Case",
+    "hard-case": "Hard Case",
+    "soft-case": "Soft Case",
+    "wallet-case": "Wallet Case",
   }
 
   const createdProducts: any[] = []
   const failedModels: string[] = []
 
-  // 3. Process each phone model with event loop microtask yielding
-  for (const modelId of modelIds) {
-    await new Promise((resolve) => setImmediate(resolve))
+  // 3. Process each case type & phone model
+  for (const caseType of targetCaseTypes) {
+    const caseLabel = CASE_TYPE_LABELS[caseType] || "Cover"
+    const targetDesignSlug = `${cleanBase}-${caseType}`
 
-    const phoneModel = await DeviceModel.findById(modelId).populate("brand")
-    if (!phoneModel) {
-      failedModels.push(`Model not found (${modelId})`)
-      continue
-    }
+    // Resolve matching category for this caseType
+    let targetCategory = product.category
+    const matchingCat = await Category.findOne({ slug: caseType })
+    if (matchingCat) targetCategory = matchingCat._id
 
-    if (!phoneModel.templates || phoneModel.templates.length === 0) {
-      failedModels.push(`${phoneModel.displayName} has no mockup templates configured`)
-      continue
-    }
+    for (const modelId of modelIds) {
+      await new Promise((resolve) => setImmediate(resolve))
 
-    try {
-      const generatedImageIds = []
-      for (const template of phoneModel.templates) {
-        if (!template.printArea) continue
-        await new Promise((resolve) => setImmediate(resolve))
-
-        const buffer = await generateSingleMockup(
-          designBuffer,
-          template.templateImageUrl,
-          template.printArea,
-          template.cameraArea,
-          template.blendMode || "multiply",
-          template.overlayImageUrl
-        )
-        const filename = `mockups/bulk/${phoneModel._id}-${template.id}-${uuid()}.webp`
-        const url = await uploadBuffer(filename, buffer, "image/webp")
-        const imgDoc = await Image.create({
-          filename: filename.split("/").pop(),
-          contentType: "image/webp",
-          size: buffer.length,
-          url,
-        })
-        generatedImageIds.push(imgDoc._id)
-      }
-
-      if (generatedImageIds.length === 0) {
-        failedModels.push(`${phoneModel.displayName} has no valid printArea in templates`)
+      const phoneModel = await DeviceModel.findById(modelId).populate("brand")
+      if (!phoneModel) {
+        failedModels.push(`Model not found (${modelId})`)
         continue
       }
 
-      const brandName = (phoneModel.brand as any)?.name || "GENERIC"
-      const designPrefix = designDoc ? designDoc._id.toString() : product.sku ? product.sku.split("-")[0] : "PSS"
-      const sku = `${designPrefix}-${brandName}-${phoneModel.name}`.replace(/\s+/g, "-").toUpperCase()
+      if (!phoneModel.templates || phoneModel.templates.length === 0) {
+        failedModels.push(`${phoneModel.displayName} has no mockup templates configured`)
+        continue
+      }
 
-      // Target format: "<DeviceModel DisplayName> - <Cover Name>"
-      const targetProductName = `${phoneModel.displayName || phoneModel.name} - ${cleanDesignName}`
+      try {
+        const generatedImageIds = []
+        for (const template of phoneModel.templates) {
+          if (!template.printArea) continue
+          await new Promise((resolve) => setImmediate(resolve))
 
-      // Create or update Product
-      const newProduct = await Product.findOneAndUpdate(
-        {
-          $or: [
-            { sku: sku.toUpperCase() },
-            { designSlug: product.designSlug, deviceModels: phoneModel._id },
-          ],
-        },
-        {
-          name: targetProductName,
-          slug: sku.toLowerCase(),
-          shortDescription: product.shortDescription || "",
-          description: product.description || `Premium case for ${phoneModel.displayName} featuring ${cleanDesignName}`,
-          price: product.price || 499,
-          comparePrice: product.comparePrice || 999,
-          category: product.category,
-          brand: phoneModel.brand?._id || phoneModel.brand || product.brand,
-          deviceModels: [phoneModel._id],
-          isActive: true,
-          status: "active",
-          stock: product.stock || 10,
-          sku: sku.toUpperCase(),
-          caseType: product.caseType || "hard-case",
-          designSlug: product.designSlug,
-          tags: product.tags || [],
-          $addToSet: { images: { $each: generatedImageIds } },
-        },
-        { upsert: true, new: true }
-      )
+          const buffer = await generateSingleMockup(
+            designBuffer,
+            template.templateImageUrl,
+            template.printArea,
+            template.cameraArea,
+            template.blendMode || "multiply",
+            template.overlayImageUrl
+          )
+          const filename = `mockups/bulk/${phoneModel._id}-${template.id}-${uuid()}.webp`
+          const url = await uploadBuffer(filename, buffer, "image/webp")
+          const imgDoc = await Image.create({
+            filename: filename.split("/").pop(),
+            contentType: "image/webp",
+            size: buffer.length,
+            url,
+          })
+          generatedImageIds.push(imgDoc._id)
+        }
 
-      // Ensure this new model is in the source product's deviceModels
-      await Product.findByIdAndUpdate(product._id, {
-        $addToSet: { deviceModels: phoneModel._id },
-      })
+        if (generatedImageIds.length === 0) {
+          failedModels.push(`${phoneModel.displayName} has no valid printArea in templates`)
+          continue
+        }
 
-      createdProducts.push(newProduct)
-    } catch (err: any) {
-      console.error(`Error generating mockup for model ${phoneModel.displayName}:`, err)
-      failedModels.push(`${phoneModel.displayName}: ${err.message}`)
+        const brandName = (phoneModel.brand as any)?.name || "GENERIC"
+        const designPrefix = designDoc ? designDoc._id.toString() : product.sku ? product.sku.split("-")[0] : "PSS"
+        const sku = `${designPrefix}-${brandName}-${phoneModel.name}-${caseType}`.replace(/\s+/g, "-").toUpperCase()
+
+        // Clean target product name: e.g. "iPhone 17 Pro - Blorng - Dual Case"
+        const targetProductName = `${phoneModel.displayName || phoneModel.name} - ${cleanDesignName} - ${caseLabel}`
+
+        // Create or update Product
+        const newProduct = await Product.findOneAndUpdate(
+          {
+            $or: [
+              { sku: sku.toUpperCase() },
+              { designSlug: targetDesignSlug, deviceModels: phoneModel._id },
+            ],
+          },
+          {
+            name: targetProductName,
+            slug: sku.toLowerCase(),
+            shortDescription: product.shortDescription || "",
+            description: product.description || `Premium ${caseLabel} for ${phoneModel.displayName} featuring ${cleanDesignName}`,
+            price: product.price || 499,
+            comparePrice: product.comparePrice || 999,
+            category: targetCategory,
+            brand: phoneModel.brand?._id || phoneModel.brand || product.brand,
+            deviceModels: [phoneModel._id],
+            isActive: true,
+            status: "active",
+            stock: product.stock || 10,
+            sku: sku.toUpperCase(),
+            caseType: caseType,
+            designSlug: targetDesignSlug,
+            tags: product.tags || [],
+            $addToSet: { images: { $each: generatedImageIds } },
+          },
+          { upsert: true, new: true }
+        )
+
+        createdProducts.push(newProduct)
+      } catch (err: any) {
+        console.error(`Error generating mockup for model ${phoneModel.displayName} (${caseType}):`, err)
+        failedModels.push(`${phoneModel.displayName} (${caseLabel}): ${err.message}`)
+      }
     }
   }
 
