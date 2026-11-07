@@ -2,7 +2,7 @@ import { Router } from "express"
 import {
   getProducts, getProductBySlug, getFeaturedProducts, getProductsByDevice,
   createProduct, updateProduct, deleteProduct, adminGetProducts, removeProductImage,
-  generateManualMockup, getDesignVariants, parseProductNameAPI
+  generateManualMockup, generateModelsForProduct, getDesignVariants, parseProductNameAPI
 } from "../controllers/productController"
 import { protect, authorize } from "../middlewares/authMiddleware"
 import { upload, optimizeImages } from "../utils/upload"
@@ -28,6 +28,7 @@ router.post("/", protect, authorize("admin", "superadmin"), upload.array("images
 router.put("/:id", protect, authorize("admin", "superadmin"), upload.array("images", 10), optimizeImages, updateProduct)
 router.delete("/:id/images/:imageId", protect, authorize("admin", "superadmin"), removeProductImage)
 router.post("/:id/mockup", protect, authorize("admin", "superadmin"), upload.single("design"), optimizeImages, generateManualMockup)
+router.post("/:id/generate-models", protect, authorize("admin", "superadmin"), upload.single("design"), generateModelsForProduct)
 router.delete("/:id", protect, authorize("admin", "superadmin"), deleteProduct)
 
 export default router
