@@ -139,11 +139,23 @@ export async function uploadBuffer(filePath: string, buffer: Buffer, contentType
     fs.mkdirSync(fileDir, { recursive: true })
   }
 
+  // Fast-path: If the buffer is already an optimized WebP, write directly without re-encoding!
+  // WebP header: 'RIFF' at byte 0, 'WEBP' at byte 8
+  const isAlreadyWebp =
+    buffer.length > 12 &&
+    buffer.toString("ascii", 0, 4) === "RIFF" &&
+    buffer.toString("ascii", 8, 12) === "WEBP"
+
+  if (isAlreadyWebp) {
+    await fs.promises.writeFile(fullPath, buffer)
+    return `/uploads/${webpName}`
+  }
+
   try {
     await sharp(buffer)
       .rotate()
       .resize({ width: 1800, height: 1800, fit: "inside", withoutEnlargement: true })
-      .webp({ quality: 85, effort: 5, smartSubsample: true })
+      .webp({ quality: 85, effort: 3, smartSubsample: true })
       .toFile(fullPath)
     return `/uploads/${webpName}`
   } catch {

@@ -1,5 +1,5 @@
 import { Worker } from "bullmq"
-import sharp from "sharp"
+import sharp, { OverlayOptions } from "sharp"
 import axios from "axios"
 import { v4 as uuid } from "uuid"
 import { DeviceModel } from "../models/DeviceModel"
@@ -11,30 +11,63 @@ import { uploadBuffer } from "../utils/upload"
 import path from "path"
 import fs from "fs"
 
+// ── Sharp High-Performance Configuration ───────────────────────────────
+// Enable SIMD (AVX2) hardware acceleration for 2-3x faster image operations
+sharp.simd(true)
+// Limit sharp internal thread pool to 1 thread per task so workers never saturate all CPU cores
+sharp.concurrency(1)
+// Controlled LRU cache (max 64MB) to prevent memory ballooning during bulk automation
+sharp.cache({ memory: 64, files: 20, items: 100 })
+
 const connection = {
   host: process.env.REDIS_HOST || "127.0.0.1",
   port: parseInt(process.env.REDIS_PORT || "6379", 10),
 }
 
-export async function fetchAsBuffer(urlOrPath: string): Promise<Buffer> {
+// In-memory cache for static base templates & overlays (10-minute TTL)
+// Eliminates repetitive disk reads when generating mockups for 50+ phone models
+const templateBufferCache = new Map<string, { buffer: Buffer; expiresAt: number }>()
+
+export async function fetchAsBuffer(urlOrPath: string, useCache: boolean = false): Promise<Buffer> {
+  const now = Date.now()
+  if (useCache && templateBufferCache.has(urlOrPath)) {
+    const cached = templateBufferCache.get(urlOrPath)!
+    if (cached.expiresAt > now) {
+      return cached.buffer
+    }
+    templateBufferCache.delete(urlOrPath)
+  }
+
+  let buf: Buffer
   if (urlOrPath.startsWith("http")) {
-    const res = await axios.get(urlOrPath, { responseType: "arraybuffer" })
-    return Buffer.from(res.data)
+    const res = await axios.get(urlOrPath, { responseType: "arraybuffer", timeout: 15000 })
+    buf = Buffer.from(res.data)
+  } else {
+    // Local file
+    const safePath = urlOrPath.replace(/^\/api\//, "").replace(/^\/+/, "")
+    let filepath = path.join(__dirname, "../../public", safePath)
+    if (safePath.startsWith("uploads")) {
+      const { getUploadDir } = require("../utils/upload")
+      filepath = path.join(getUploadDir(), safePath.replace(/^uploads\/?/, ""))
+    }
+    
+    if (!fs.existsSync(filepath)) {
+      filepath = path.join(__dirname, "../../", safePath)
+    }
+    
+    // Non-blocking asynchronous file read
+    buf = await fs.promises.readFile(filepath)
   }
-  // Local file
-  const safePath = urlOrPath.replace(/^\/api\//, "").replace(/^\/+/, "")
-  let filepath = path.join(__dirname, "../../public", safePath)
-  if (safePath.startsWith("uploads")) {
-    const { getUploadDir } = require("../utils/upload")
-    filepath = path.join(getUploadDir(), safePath.replace(/^uploads\/?/, ""))
+
+  if (useCache) {
+    if (templateBufferCache.size > 80) {
+      const oldestKey = templateBufferCache.keys().next().value
+      if (oldestKey) templateBufferCache.delete(oldestKey)
+    }
+    templateBufferCache.set(urlOrPath, { buffer: buf, expiresAt: now + 10 * 60 * 1000 })
   }
-  
-  if (!fs.existsSync(filepath)) {
-    // Fallback just in case
-    filepath = path.join(__dirname, "../../", safePath)
-  }
-  
-  return fs.readFileSync(filepath)
+
+  return buf
 }
 
 export async function generateSingleMockup(
@@ -45,7 +78,10 @@ export async function generateSingleMockup(
   blendMode: string,
   overlayUrl?: string
 ): Promise<Buffer> {
-  const templateBuffer = await fetchAsBuffer(templateUrl)
+  // Yield microtask to event loop so customer requests (browsing/checkout) are never starved
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const templateBuffer = await fetchAsBuffer(templateUrl, true)
 
   const pWidth = Math.round(printArea.width)
   const pHeight = Math.round(printArea.height)
@@ -53,13 +89,13 @@ export async function generateSingleMockup(
   const pY = Math.round(printArea.y)
   const printRx = Math.round(printArea.borderRadius || 0)
 
-  const templateMetadata = await sharp(templateBuffer).metadata();
-  const tWidth = templateMetadata.width || 800;
-  const tHeight = templateMetadata.height || 800;
+  const templateMetadata = await sharp(templateBuffer).metadata()
+  const tWidth = templateMetadata.width || 800
+  const tHeight = templateMetadata.height || 800
 
   // Clamp print area so it doesn't overflow the base template image (causes Sharp to crash)
-  const safePWidth = Math.min(pWidth, tWidth - pX);
-  const safePHeight = Math.min(pHeight, tHeight - pY);
+  const safePWidth = Math.max(1, Math.min(pWidth, tWidth - pX))
+  const safePHeight = Math.max(1, Math.min(pHeight, tHeight - pY))
 
   const resizedDesign = await sharp(designBuffer)
     .resize(safePWidth, safePHeight, { fit: "cover" })
@@ -86,22 +122,25 @@ export async function generateSingleMockup(
     .png()
     .toBuffer()
 
-  let finalBase = sharp(templateBuffer).composite([{ input: maskedDesign, top: pY, left: pX, blend: blendMode as any }])
-  let mockupBuffer = await finalBase.jpeg({ quality: 85 }).toBuffer()
+  // Single-pass composite array: composites design AND overlay together in 1 operation
+  const composites: OverlayOptions[] = [
+    { input: maskedDesign, top: pY, left: pX, blend: blendMode as any },
+  ]
 
-  // Apply Overlay Mask for 3D Effect if provided
+  // If 3D overlay is provided, resize and add to composite pipeline
   if (overlayUrl) {
-    const overlayBuffer = await fetchAsBuffer(overlayUrl)
-    // Force overlay to perfectly match the base template dimensions to avoid Sharp crashes
+    const overlayBuffer = await fetchAsBuffer(overlayUrl, true)
     const resizedOverlay = await sharp(overlayBuffer)
       .resize(tWidth, tHeight, { fit: 'fill' })
       .toBuffer()
-      
-    mockupBuffer = await sharp(mockupBuffer)
-      .composite([{ input: resizedOverlay, blend: 'over' }])
-      .jpeg({ quality: 85 })
-      .toBuffer()
+    composites.push({ input: resizedOverlay, blend: 'over' })
   }
+
+  // Render directly to WebP (Quality 85, effort 3) in a single pass without intermediate JPEG conversions
+  const mockupBuffer = await sharp(templateBuffer)
+    .composite(composites)
+    .webp({ quality: 85, effort: 3, smartSubsample: true })
+    .toBuffer()
 
   return mockupBuffer
 }
@@ -134,6 +173,7 @@ export const mockupWorker = new Worker(
 
       for (const template of pTemplate.templates) {
         if (!template.printArea) continue
+        await new Promise((resolve) => setImmediate(resolve))
 
         const buffer = await generateSingleMockup(
           designBuffer,
@@ -143,11 +183,11 @@ export const mockupWorker = new Worker(
           template.blendMode || "multiply",
           template.overlayImageUrl
         )
-        const filename = `mockups/${designId}/${productTemplateId}-${template.id}-${uuid()}.jpg`
-        const url = await uploadBuffer(filename, buffer, "image/jpeg")
+        const filename = `mockups/${designId}/${productTemplateId}-${template.id}-${uuid()}.webp`
+        const url = await uploadBuffer(filename, buffer, "image/webp")
         const imgDoc = await Image.create({
           filename: filename.split("/").pop(),
-          contentType: "image/jpeg",
+          contentType: "image/webp",
           size: buffer.length,
           url: url,
         })
@@ -227,6 +267,7 @@ export const mockupWorker = new Worker(
 
     for (const template of templatesToUse) {
       if (!template.printArea) continue;
+      await new Promise((resolve) => setImmediate(resolve))
       
       const buffer = await generateSingleMockup(
         designBuffer, 
@@ -236,11 +277,11 @@ export const mockupWorker = new Worker(
         template.blendMode || 'multiply', 
         template.overlayImageUrl
       )
-      const filename = `mockups/${designId}/${phoneModelId}-${template.id}-${uuid()}.jpg`
-      const url = await uploadBuffer(filename, buffer, "image/jpeg")
+      const filename = `mockups/${designId}/${phoneModelId}-${template.id}-${uuid()}.webp`
+      const url = await uploadBuffer(filename, buffer, "image/webp")
       const imgDoc = await Image.create({
         filename: filename.split('/').pop(),
-        contentType: "image/jpeg",
+        contentType: "image/webp",
         size: buffer.length,
         url: url,
       })
@@ -287,7 +328,7 @@ export const mockupWorker = new Worker(
 
     return { mockupUrls: generatedImageIds }
   },
-  { connection, concurrency: 8 }
+  { connection, concurrency: 3 }
 )
 
 mockupWorker.on("failed", async (job: any, err: Error) => {

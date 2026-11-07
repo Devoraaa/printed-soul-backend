@@ -399,6 +399,7 @@ export const generateManualMockup = asyncHandler(async (req: any, res: Response,
 
   for (const template of deviceModel.templates) {
     if (!template.printArea) continue;
+    await new Promise((resolve) => setImmediate(resolve))
     
     const buffer = await generateSingleMockup(
       designBuffer, 
@@ -408,11 +409,11 @@ export const generateManualMockup = asyncHandler(async (req: any, res: Response,
       template.blendMode || 'multiply', 
       template.overlayImageUrl
     )
-    const filename = `mockups/manual/${product._id}-${template.id}-${uuid()}.jpg`
-    const url = await uploadBuffer(filename, buffer, "image/jpeg")
+    const filename = `mockups/manual/${product._id}-${template.id}-${uuid()}.webp`
+    const url = await uploadBuffer(filename, buffer, "image/webp")
     const imgDoc = await Image.create({
       filename: filename.split('/').pop(),
-      contentType: "image/jpeg",
+      contentType: "image/webp",
       size: buffer.length,
       url: url,
     })
@@ -636,8 +637,10 @@ export const generateModelsForProduct = asyncHandler(async (req: any, res: Respo
   const createdProducts: any[] = []
   const failedModels: string[] = []
 
-  // 3. Process each phone model
+  // 3. Process each phone model with event loop microtask yielding
   for (const modelId of modelIds) {
+    await new Promise((resolve) => setImmediate(resolve))
+
     const phoneModel = await DeviceModel.findById(modelId).populate("brand")
     if (!phoneModel) {
       failedModels.push(`Model not found (${modelId})`)
@@ -653,6 +656,8 @@ export const generateModelsForProduct = asyncHandler(async (req: any, res: Respo
       const generatedImageIds = []
       for (const template of phoneModel.templates) {
         if (!template.printArea) continue
+        await new Promise((resolve) => setImmediate(resolve))
+
         const buffer = await generateSingleMockup(
           designBuffer,
           template.templateImageUrl,
@@ -661,11 +666,11 @@ export const generateModelsForProduct = asyncHandler(async (req: any, res: Respo
           template.blendMode || "multiply",
           template.overlayImageUrl
         )
-        const filename = `mockups/bulk/${phoneModel._id}-${template.id}-${uuid()}.jpg`
-        const url = await uploadBuffer(filename, buffer, "image/jpeg")
+        const filename = `mockups/bulk/${phoneModel._id}-${template.id}-${uuid()}.webp`
+        const url = await uploadBuffer(filename, buffer, "image/webp")
         const imgDoc = await Image.create({
           filename: filename.split("/").pop(),
-          contentType: "image/jpeg",
+          contentType: "image/webp",
           size: buffer.length,
           url,
         })
